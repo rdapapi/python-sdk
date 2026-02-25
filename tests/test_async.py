@@ -47,6 +47,78 @@ ASN_RESPONSE = {
 }
 
 
+IP_RESPONSE = {
+    "handle": "NET-8-8-8-0-2",
+    "name": "GOGL",
+    "type": "DIRECT ALLOCATION",
+    "start_address": "8.8.8.0",
+    "end_address": "8.8.8.255",
+    "ip_version": "v4",
+    "parent_handle": "NET-8-0-0-0-0",
+    "country": None,
+    "status": ["active"],
+    "dates": {"registered": "2023-12-28T17:24:33-05:00", "expires": None, "updated": None},
+    "entities": {},
+    "cidr": ["8.8.8.0/24"],
+    "remarks": [],
+    "port43": "whois.arin.net",
+    "meta": {
+        "rdap_server": "https://rdap.arin.net/registry/",
+        "raw_rdap_url": "https://rdap.arin.net/registry/ip/8.8.8.8",
+        "cached": False,
+        "cache_expires": "2026-02-24T15:30:00Z",
+    },
+}
+
+NS_RESPONSE = {
+    "ldh_name": "ns1.google.com",
+    "unicode_name": None,
+    "handle": None,
+    "ip_addresses": {"v4": ["216.239.32.10"], "v6": []},
+    "status": [],
+    "dates": {"registered": None, "expires": None, "updated": None},
+    "entities": {},
+    "meta": {
+        "rdap_server": "https://rdap.verisign.com/com/v1/",
+        "raw_rdap_url": "https://rdap.verisign.com/com/v1/nameserver/ns1.google.com",
+        "cached": False,
+        "cache_expires": "2026-02-24T15:30:00Z",
+    },
+}
+
+ENTITY_RESPONSE = {
+    "handle": "GOGL",
+    "name": "Google LLC",
+    "organization": None,
+    "email": None,
+    "phone": None,
+    "address": None,
+    "contact_url": None,
+    "country_code": None,
+    "roles": [],
+    "status": [],
+    "dates": {"registered": "2000-03-30T00:00:00-04:00", "expires": None, "updated": None},
+    "remarks": [],
+    "port43": "whois.arin.net",
+    "public_ids": [],
+    "entities": {},
+    "autnums": [],
+    "networks": [],
+    "meta": {
+        "rdap_server": "https://rdap.arin.net/registry/",
+        "raw_rdap_url": "https://rdap.arin.net/registry/entity/GOGL",
+        "cached": False,
+        "cache_expires": "2026-02-24T15:30:00Z",
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_async_empty_api_key_raises():
+    with pytest.raises(ValueError, match="non-empty"):
+        AsyncRdapApi("")
+
+
 @pytest.mark.asyncio
 @respx.mock
 async def test_async_domain_lookup():
@@ -190,3 +262,52 @@ async def test_async_bulk_domains_plan_upgrade_required():
             await api.bulk_domains(["google.com"])
 
     assert exc_info.value.error == "plan_upgrade_required"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_async_ip_lookup():
+    respx.get(f"{BASE_URL}/ip/8.8.8.8").mock(return_value=httpx.Response(200, json=IP_RESPONSE))
+
+    async with AsyncRdapApi("test-key", base_url=BASE_URL) as api:
+        result = await api.ip("8.8.8.8")
+
+    assert result.handle == "NET-8-8-8-0-2"
+    assert result.ip_version == "v4"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_async_nameserver_lookup():
+    respx.get(f"{BASE_URL}/nameserver/ns1.google.com").mock(return_value=httpx.Response(200, json=NS_RESPONSE))
+
+    async with AsyncRdapApi("test-key", base_url=BASE_URL) as api:
+        result = await api.nameserver("ns1.google.com")
+
+    assert result.ldh_name == "ns1.google.com"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_async_entity_lookup():
+    respx.get(f"{BASE_URL}/entity/GOGL").mock(return_value=httpx.Response(200, json=ENTITY_RESPONSE))
+
+    async with AsyncRdapApi("test-key", base_url=BASE_URL) as api:
+        result = await api.entity("GOGL")
+
+    assert result.handle == "GOGL"
+    assert result.name == "Google LLC"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_async_bulk_domains_with_follow():
+    import json
+
+    route = respx.post(f"{BASE_URL}/domains/bulk").mock(return_value=httpx.Response(200, json=BULK_RESPONSE))
+
+    async with AsyncRdapApi("test-key", base_url=BASE_URL) as api:
+        await api.bulk_domains(["google.com"], follow=True)
+
+    body = json.loads(route.calls[0].request.content)
+    assert body["follow"] is True

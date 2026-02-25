@@ -9,6 +9,7 @@ from rdapapi import (
     NotFoundError,
     RateLimitError,
     RdapApi,
+    RdapApiError,
     SubscriptionRequiredError,
     UpstreamError,
     ValidationError,
@@ -359,6 +360,24 @@ def test_upstream_error():
         api.domain("test.com")
 
     assert exc_info.value.status_code == 502
+    api.close()
+
+
+def test_empty_api_key_raises():
+    with pytest.raises(ValueError, match="non-empty"):
+        RdapApi("")
+
+
+@respx.mock
+def test_non_json_error_body():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(return_value=httpx.Response(500, text="Internal Server Error"))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(RdapApiError) as exc_info:
+        api.domain("test.com")
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.error == "unknown_error"
     api.close()
 
 

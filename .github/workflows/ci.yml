@@ -31,4 +31,4 @@ jobs:
         run: ruff format --check .
 
       - name: Run tests
-        run: pytest -v
+        run: pytest -v --cov=rdapapi --cov-fail-under=100
