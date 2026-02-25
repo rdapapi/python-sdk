@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import httpx
 
@@ -18,6 +18,7 @@ from .exceptions import (
 )
 from .models import (
     AsnResponse,
+    BulkDomainResponse,
     DomainResponse,
     EntityResponse,
     IpResponse,
@@ -62,6 +63,14 @@ def _raise_for_status(response: httpx.Response) -> None:
         raise exc_class(message, **kwargs)
 
 
+def _parse_bulk_response(data: dict) -> BulkDomainResponse:
+    """Parse a bulk domain response, merging meta into each successful result's data."""
+    for result in data.get("results", []):
+        if result.get("status") == "success" and "data" in result and "meta" in result:
+            result["data"]["meta"] = result.pop("meta")
+    return BulkDomainResponse.model_validate(data)
+
+
 class RdapApi:
     """Synchronous client for the RDAP API.
 
@@ -102,6 +111,15 @@ class RdapApi:
         _raise_for_status(response)
         return response.json()
 
+    def _post(
+        self,
+        path: str,
+        body: Dict[str, Any],
+    ) -> dict:
+        response = self._client.post(path, json=body)
+        _raise_for_status(response)
+        return response.json()
+
     def domain(self, name: str, *, follow: bool = False) -> DomainResponse:
         """Look up RDAP registration data for a domain name."""
         params = {"follow": "true"} if follow else None
@@ -131,6 +149,23 @@ class RdapApi:
         """Look up RDAP registration data for an entity by handle."""
         data = self._request(f"/entity/{handle}")
         return EntityResponse.model_validate(data)
+
+    def bulk_domains(
+        self,
+        domains: List[str],
+        *,
+        follow: bool = False,
+    ) -> BulkDomainResponse:
+        """Look up multiple domains in a single request.
+
+        Sends up to 10 domains concurrently. Requires a Pro or Business plan.
+        Each domain counts as one request toward your quota.
+        """
+        body: Dict[str, Any] = {"domains": domains}
+        if follow:
+            body["follow"] = True
+        data = self._post("/domains/bulk", body)
+        return _parse_bulk_response(data)
 
     def close(self) -> None:
         """Close the underlying HTTP client."""
@@ -183,6 +218,15 @@ class AsyncRdapApi:
         _raise_for_status(response)
         return response.json()
 
+    async def _post(
+        self,
+        path: str,
+        body: Dict[str, Any],
+    ) -> dict:
+        response = await self._client.post(path, json=body)
+        _raise_for_status(response)
+        return response.json()
+
     async def domain(self, name: str, *, follow: bool = False) -> DomainResponse:
         """Look up RDAP registration data for a domain name."""
         params = {"follow": "true"} if follow else None
@@ -212,6 +256,23 @@ class AsyncRdapApi:
         """Look up RDAP registration data for an entity by handle."""
         data = await self._request(f"/entity/{handle}")
         return EntityResponse.model_validate(data)
+
+    async def bulk_domains(
+        self,
+        domains: List[str],
+        *,
+        follow: bool = False,
+    ) -> BulkDomainResponse:
+        """Look up multiple domains in a single request.
+
+        Sends up to 10 domains concurrently. Requires a Pro or Business plan.
+        Each domain counts as one request toward your quota.
+        """
+        body: Dict[str, Any] = {"domains": domains}
+        if follow:
+            body["follow"] = True
+        data = await self._post("/domains/bulk", body)
+        return _parse_bulk_response(data)
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""

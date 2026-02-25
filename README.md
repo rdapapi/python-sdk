@@ -46,6 +46,24 @@ print(entity.autnums[0].handle) # "AS15169"
 api.close()
 ```
 
+## Bulk domain lookups
+
+Look up multiple domains in a single request (Pro and Business plans). Up to 10 domains per call, with concurrent upstream fetches:
+
+```python
+result = api.bulk_domains(["google.com", "github.com", "invalid..com"], follow=True)
+
+print(result.summary)  # total=3, successful=2, failed=1
+
+for r in result.results:
+    if r.status == "success":
+        print(f"{r.data.domain}: {r.data.registrar.name}")
+    else:
+        print(f"{r.domain}: {r.error}")
+```
+
+Each domain counts as one request toward your monthly quota. Starter plans receive a `SubscriptionRequiredError` (403).
+
 ## Registrar follow-through
 
 For thin registries like `.com` and `.net`, the registry only returns basic registrar info. Use `follow=True` to follow the registrar's RDAP link and get richer contact data:

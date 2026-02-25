@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field
 
 __all__ = [
     "AsnResponse",
+    "BulkDomainResponse",
+    "BulkDomainResult",
+    "BulkDomainSummary",
     "Contact",
     "Dates",
     "DomainResponse",
@@ -181,6 +184,36 @@ class EntityNetwork(BaseModel):
     end_address: Optional[str] = None
     ip_version: Optional[str] = None
     cidr: List[str] = Field(default_factory=list)
+
+
+class BulkDomainResult(BaseModel):
+    """A single result within a bulk domain lookup response.
+
+    When ``status`` is ``"success"``, ``data`` contains a full
+    :class:`DomainResponse`.  When ``status`` is ``"error"``,
+    ``error`` and ``message`` describe the failure.
+    """
+
+    domain: str
+    status: str
+    data: Optional[DomainResponse] = None
+    error: Optional[str] = None
+    message: Optional[str] = None
+
+
+class BulkDomainSummary(BaseModel):
+    """Summary counts for a bulk domain lookup."""
+
+    total: int
+    successful: int
+    failed: int
+
+
+class BulkDomainResponse(BaseModel):
+    """Response from a bulk domain lookup."""
+
+    results: List[BulkDomainResult]
+    summary: BulkDomainSummary
 
 
 class EntityResponse(BaseModel):

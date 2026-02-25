@@ -13,6 +13,9 @@ from .exceptions import (
 )
 from .models import (
     AsnResponse,
+    BulkDomainResponse,
+    BulkDomainResult,
+    BulkDomainSummary,
     Contact,
     Dates,
     DomainResponse,
@@ -43,6 +46,9 @@ __all__ = [
     "UpstreamError",
     # Models
     "AsnResponse",
+    "BulkDomainResponse",
+    "BulkDomainResult",
+    "BulkDomainSummary",
     "Contact",
     "Dates",
     "DomainResponse",

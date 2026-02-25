@@ -2,6 +2,7 @@
 
 from rdapapi import (
     AsnResponse,
+    BulkDomainResponse,
     DomainResponse,
     EntityResponse,
     IpResponse,
@@ -254,3 +255,57 @@ def test_model_dump_roundtrip():
 
     assert original == restored
     assert restored.handle == "AS15169"
+
+
+def test_bulk_domain_response_parses():
+    data = {
+        "results": [
+            {
+                "domain": "google.com",
+                "status": "success",
+                "data": {
+                    "domain": "google.com",
+                    "unicode_name": None,
+                    "handle": None,
+                    "status": ["active"],
+                    "registrar": {
+                        "name": "MarkMonitor Inc.",
+                        "iana_id": "292",
+                        "abuse_email": None,
+                        "abuse_phone": None,
+                        "url": None,
+                    },
+                    "dates": {"registered": "1997-09-15T04:00:00Z", "expires": "2028-09-14T04:00:00Z", "updated": None},
+                    "nameservers": ["ns1.google.com"],
+                    "dnssec": False,
+                    "entities": {},
+                    "meta": {
+                        "rdap_server": "https://rdap.verisign.com/com/v1/",
+                        "raw_rdap_url": "https://rdap.verisign.com/com/v1/domain/google.com",
+                        "cached": False,
+                        "cache_expires": "2026-02-25T00:00:00Z",
+                    },
+                },
+            },
+            {
+                "domain": "invalid..com",
+                "status": "error",
+                "error": "invalid_domain",
+                "message": "The provided domain name is not valid.",
+            },
+        ],
+        "summary": {"total": 2, "successful": 1, "failed": 1},
+    }
+
+    result = BulkDomainResponse.model_validate(data)
+
+    assert result.summary.total == 2
+    assert result.summary.successful == 1
+    assert result.summary.failed == 1
+    assert result.results[0].status == "success"
+    assert result.results[0].data is not None
+    assert result.results[0].data.registrar.name == "MarkMonitor Inc."
+    assert result.results[0].data.meta.cached is False
+    assert result.results[1].status == "error"
+    assert result.results[1].error == "invalid_domain"
+    assert result.results[1].data is None

@@ -1,16 +1,21 @@
-"""Look up multiple domains in a loop."""
+"""Look up multiple domains in a single bulk request (Pro/Business plans)."""
 
-from rdapapi import NotFoundError, RdapApi
+from rdapapi import RdapApi
 
 api = RdapApi("your-api-key")
 
-domains = ["google.com", "github.com", "cloudflare.com", "nonexistent.example"]
+# Bulk lookup — up to 10 domains in one request
+result = api.bulk_domains(
+    ["google.com", "github.com", "invalid..com"],
+    follow=True,
+)
 
-for name in domains:
-    try:
-        result = api.domain(name)
-        print(f"{result.domain}: registrar={result.registrar.name}, expires={result.dates.expires}")
-    except NotFoundError:
-        print(f"{name}: not found")
+print(f"Total: {result.summary.total}, OK: {result.summary.successful}, Failed: {result.summary.failed}")
+
+for r in result.results:
+    if r.status == "success":
+        print(f"  {r.data.domain}: registrar={r.data.registrar.name}, expires={r.data.dates.expires}")
+    else:
+        print(f"  {r.domain}: {r.error} — {r.message}")
 
 api.close()

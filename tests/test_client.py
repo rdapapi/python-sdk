@@ -13,6 +13,7 @@ from rdapapi import (
     UpstreamError,
     ValidationError,
 )
+from rdapapi.models import BulkDomainResponse
 
 BASE_URL = "https://rdapapi.io/api/v1"
 
@@ -369,4 +370,151 @@ def test_auth_header_sent():
     api.domain("google.com")
 
     assert route.calls[0].request.headers["authorization"] == "Bearer my-secret-key"
+    api.close()
+
+
+# === Bulk Domain Lookups ===
+
+BULK_RESPONSE = {
+    "results": [
+        {
+            "domain": "google.com",
+            "status": "success",
+            "data": {
+                "domain": "google.com",
+                "unicode_name": None,
+                "handle": "2138514_DOMAIN_COM-VRSN",
+                "status": ["client delete prohibited"],
+                "registrar": {
+                    "name": "MarkMonitor Inc.",
+                    "iana_id": "292",
+                    "abuse_email": None,
+                    "abuse_phone": None,
+                    "url": None,
+                },
+                "dates": {"registered": "1997-09-15T04:00:00Z", "expires": "2028-09-14T04:00:00Z", "updated": None},
+                "nameservers": ["ns1.google.com", "ns2.google.com"],
+                "dnssec": False,
+                "entities": {},
+            },
+            "meta": {
+                "rdap_server": "https://rdap.verisign.com/com/v1/",
+                "raw_rdap_url": "https://rdap.verisign.com/com/v1/domain/google.com",
+                "cached": False,
+                "cache_expires": "2026-02-25T15:30:00Z",
+            },
+        },
+        {
+            "domain": "invalid..com",
+            "status": "error",
+            "error": "invalid_domain",
+            "message": "The provided domain name is not valid.",
+        },
+    ],
+    "summary": {"total": 2, "successful": 1, "failed": 1},
+}
+
+
+@respx.mock
+def test_bulk_domains_lookup():
+    respx.post(f"{BASE_URL}/domains/bulk").mock(return_value=httpx.Response(200, json=BULK_RESPONSE))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    result = api.bulk_domains(["google.com", "invalid..com"])
+
+    assert isinstance(result, BulkDomainResponse)
+    assert result.summary.total == 2
+    assert result.summary.successful == 1
+    assert result.summary.failed == 1
+
+    # Successful result has data as DomainResponse
+    assert result.results[0].status == "success"
+    assert result.results[0].data is not None
+    assert result.results[0].data.domain == "google.com"
+    assert result.results[0].data.registrar.name == "MarkMonitor Inc."
+    assert result.results[0].data.meta.rdap_server == "https://rdap.verisign.com/com/v1/"
+
+    # Error result has error info
+    assert result.results[1].status == "error"
+    assert result.results[1].error == "invalid_domain"
+    assert result.results[1].data is None
+
+    api.close()
+
+
+@respx.mock
+def test_bulk_domains_with_follow():
+    route = respx.post(f"{BASE_URL}/domains/bulk").mock(return_value=httpx.Response(200, json=BULK_RESPONSE))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    api.bulk_domains(["google.com"], follow=True)
+
+    request = route.calls[0].request
+    import json
+
+    body = json.loads(request.content)
+    assert body["domains"] == ["google.com"]
+    assert body["follow"] is True
+    api.close()
+
+
+@respx.mock
+def test_bulk_domains_without_follow_omits_key():
+    route = respx.post(f"{BASE_URL}/domains/bulk").mock(return_value=httpx.Response(200, json=BULK_RESPONSE))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    api.bulk_domains(["google.com"])
+
+    request = route.calls[0].request
+    import json
+
+    body = json.loads(request.content)
+    assert "follow" not in body
+    api.close()
+
+
+@respx.mock
+def test_bulk_domains_plan_upgrade_required():
+    respx.post(f"{BASE_URL}/domains/bulk").mock(
+        return_value=httpx.Response(
+            403, json={"error": "plan_upgrade_required", "message": "Bulk lookups require a Pro or Business plan."}
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(SubscriptionRequiredError) as exc_info:
+        api.bulk_domains(["google.com"])
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.error == "plan_upgrade_required"
+    api.close()
+
+
+@respx.mock
+def test_bulk_domains_auth_error():
+    respx.post(f"{BASE_URL}/domains/bulk").mock(
+        return_value=httpx.Response(401, json={"error": "unauthenticated", "message": "Invalid or missing API token."})
+    )
+
+    api = RdapApi("bad-key", base_url=BASE_URL)
+    with pytest.raises(AuthenticationError):
+        api.bulk_domains(["google.com"])
+    api.close()
+
+
+@respx.mock
+def test_bulk_domains_rate_limit_error():
+    respx.post(f"{BASE_URL}/domains/bulk").mock(
+        return_value=httpx.Response(
+            429,
+            json={"error": "rate_limit_exceeded", "message": "Rate limit exceeded."},
+            headers={"Retry-After": "60"},
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(RateLimitError) as exc_info:
+        api.bulk_domains(["google.com"])
+
+    assert exc_info.value.retry_after == 60
     api.close()
