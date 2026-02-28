@@ -3,6 +3,7 @@
 from rdapapi import (
     AsnResponse,
     BulkDomainResponse,
+    Dates,
     DomainResponse,
     EntityResponse,
     IpResponse,
@@ -255,6 +256,36 @@ def test_model_dump_roundtrip():
 
     assert original == restored
     assert restored.handle == "AS15169"
+
+
+def test_dates_parsed_properties():
+    from datetime import datetime, timezone
+
+    dates = Dates.model_validate(
+        {"registered": "2020-01-01T00:00:00Z", "expires": "2028-09-14T04:00:00Z", "updated": None}
+    )
+
+    assert dates.registered_at == datetime(2020, 1, 1, tzinfo=timezone.utc)
+    assert dates.expires_at == datetime(2028, 9, 14, 4, 0, 0, tzinfo=timezone.utc)
+    assert dates.updated_at is None
+    assert isinstance(dates.expires_in_days, int)
+    assert dates.expires_in_days > 0
+
+
+def test_dates_null_returns_none():
+    dates = Dates.model_validate({"registered": None, "expires": None, "updated": None})
+
+    assert dates.registered_at is None
+    assert dates.expires_at is None
+    assert dates.updated_at is None
+    assert dates.expires_in_days is None
+
+
+def test_dates_invalid_string_returns_none():
+    dates = Dates.model_validate({"registered": "not-a-date", "expires": "garbage", "updated": None})
+
+    assert dates.registered_at is None
+    assert dates.expires_at is None
 
 
 def test_bulk_domain_response_parses():

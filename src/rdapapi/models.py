@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -46,6 +47,38 @@ class Dates(BaseModel):
     registered: Optional[str] = None
     expires: Optional[str] = None
     updated: Optional[str] = None
+
+    @staticmethod
+    def _parse(value: Optional[str]) -> Optional[datetime]:
+        if value is None:
+            return None
+        try:
+            return datetime.fromisoformat(value)
+        except (ValueError, TypeError):
+            return None
+
+    @property
+    def registered_at(self) -> Optional[datetime]:
+        """Parse ``registered`` into a timezone-aware :class:`~datetime.datetime`."""
+        return self._parse(self.registered)
+
+    @property
+    def expires_at(self) -> Optional[datetime]:
+        """Parse ``expires`` into a timezone-aware :class:`~datetime.datetime`."""
+        return self._parse(self.expires)
+
+    @property
+    def updated_at(self) -> Optional[datetime]:
+        """Parse ``updated`` into a timezone-aware :class:`~datetime.datetime`."""
+        return self._parse(self.updated)
+
+    @property
+    def expires_in_days(self) -> Optional[int]:
+        """Days until expiration, or ``None`` if no expiry date is available."""
+        dt = self.expires_at
+        if dt is None:
+            return None
+        return (dt - datetime.now(timezone.utc)).days
 
 
 class Registrar(BaseModel):
