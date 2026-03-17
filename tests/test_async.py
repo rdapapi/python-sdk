@@ -4,7 +4,14 @@ import httpx
 import pytest
 import respx
 
-from rdapapi import AsyncRdapApi, AuthenticationError, NotFoundError, RateLimitError, SubscriptionRequiredError, TemporarilyUnavailableError
+from rdapapi import (
+    AsyncRdapApi,
+    AuthenticationError,
+    NotFoundError,
+    RateLimitError,
+    SubscriptionRequiredError,
+    TemporarilyUnavailableError,
+)
 from rdapapi.models import BulkDomainResponse
 
 BASE_URL = "https://rdapapi.io/api/v1"
