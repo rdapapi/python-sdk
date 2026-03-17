@@ -11,6 +11,7 @@ from rdapapi import (
     RdapApi,
     RdapApiError,
     SubscriptionRequiredError,
+    TemporarilyUnavailableError,
     UpstreamError,
     ValidationError,
 )
@@ -330,6 +331,43 @@ def test_rate_limit_error():
 
     assert exc_info.value.status_code == 429
     assert exc_info.value.retry_after == 60
+    api.close()
+
+
+@respx.mock
+def test_temporarily_unavailable_error():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(
+            503,
+            json={"error": "temporarily_unavailable", "message": "Data for this domain is temporarily unavailable."},
+            headers={"Retry-After": "300"},
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(TemporarilyUnavailableError) as exc_info:
+        api.domain("test.com")
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.retry_after == 300
+    api.close()
+
+
+@respx.mock
+def test_temporarily_unavailable_error_without_retry_after():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(
+            503,
+            json={"error": "temporarily_unavailable", "message": "Data for this domain is temporarily unavailable."},
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(TemporarilyUnavailableError) as exc_info:
+        api.domain("test.com")
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.retry_after is None
     api.close()
 
 

@@ -13,6 +13,7 @@ from .exceptions import (
     RateLimitError,
     RdapApiError,
     SubscriptionRequiredError,
+    TemporarilyUnavailableError,
     UpstreamError,
     ValidationError,
 )
@@ -36,6 +37,7 @@ _ERROR_MAP: Dict[int, type] = {
     404: NotFoundError,
     429: RateLimitError,
     502: UpstreamError,
+    503: TemporarilyUnavailableError,
 }
 
 
@@ -56,7 +58,7 @@ def _raise_for_status(response: httpx.Response) -> None:
             "error": error,
         }
 
-        if exc_class is RateLimitError:
+        if exc_class in (RateLimitError, TemporarilyUnavailableError):
             retry_after = response.headers.get("Retry-After")
             kwargs["retry_after"] = int(retry_after) if retry_after else None
 

@@ -4,7 +4,7 @@ import httpx
 import pytest
 import respx
 
-from rdapapi import AsyncRdapApi, AuthenticationError, NotFoundError, RateLimitError, SubscriptionRequiredError
+from rdapapi import AsyncRdapApi, AuthenticationError, NotFoundError, RateLimitError, SubscriptionRequiredError, TemporarilyUnavailableError
 from rdapapi.models import BulkDomainResponse
 
 BASE_URL = "https://rdapapi.io/api/v1"
@@ -196,6 +196,24 @@ async def test_async_rate_limit_error():
             await api.domain("test.com")
 
     assert exc_info.value.retry_after == 30
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_async_temporarily_unavailable_error():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(
+            503,
+            json={"error": "temporarily_unavailable", "message": "Data for this domain is temporarily unavailable."},
+            headers={"Retry-After": "300"},
+        )
+    )
+
+    async with AsyncRdapApi("test-key", base_url=BASE_URL) as api:
+        with pytest.raises(TemporarilyUnavailableError) as exc_info:
+            await api.domain("test.com")
+
+    assert exc_info.value.retry_after == 300
 
 
 # === Async Bulk Domain Lookups ===

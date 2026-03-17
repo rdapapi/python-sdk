@@ -8,6 +8,7 @@ from .exceptions import (
     RateLimitError,
     RdapApiError,
     SubscriptionRequiredError,
+    TemporarilyUnavailableError,
     UpstreamError,
     ValidationError,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "NotFoundError",
     "ValidationError",
     "RateLimitError",
+    "TemporarilyUnavailableError",
     "UpstreamError",
     # Models
     "AsnResponse",

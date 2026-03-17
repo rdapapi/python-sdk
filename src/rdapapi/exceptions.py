@@ -9,6 +9,7 @@ __all__ = [
     "NotFoundError",
     "ValidationError",
     "RateLimitError",
+    "TemporarilyUnavailableError",
     "UpstreamError",
 ]
 
@@ -47,6 +48,21 @@ class ValidationError(RdapApiError):
 
 class RateLimitError(RdapApiError):
     """Raised when rate limit or monthly quota is exceeded (HTTP 429)."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        error: str | None = None,
+        retry_after: int | None = None,
+    ) -> None:
+        super().__init__(message, status_code=status_code, error=error)
+        self.retry_after = retry_after
+
+
+class TemporarilyUnavailableError(RdapApiError):
+    """Raised when the domain data is temporarily unavailable (HTTP 503)."""
 
     def __init__(
         self,
