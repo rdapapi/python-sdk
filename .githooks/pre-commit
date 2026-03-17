@@ -1,0 +1,13 @@
+#!/bin/bash
+set -e
+
+echo "Running lint..."
+ruff check .
+
+echo "Running format check..."
+ruff format --check .
+
+echo "Running tests..."
+pytest -q --cov=rdapapi --cov-fail-under=100
+
+echo "All checks passed."

@@ -101,6 +101,7 @@ All exceptions inherit from `RdapApiError` and include `status_code`, `error`, a
 | `NotFoundError` | 404 | No RDAP data found |
 | `RateLimitError` | 429 | Rate limit or quota exceeded |
 | `UpstreamError` | 502 | Upstream RDAP server error |
+| `TemporarilyUnavailableError` | 503 | Domain data temporarily unavailable |
 
 ## Async support
 
@@ -150,6 +151,14 @@ api = RdapApi(
 - [Get an API Key](https://rdapapi.io/register)
 - [OpenAPI Spec](https://rdapapi.io/openapi.yaml)
 - [Pricing](https://rdapapi.io/pricing)
+
+## Development
+
+Set up pre-commit hooks (runs lint + tests before each commit):
+
+```bash
+git config core.hooksPath .githooks
+```
 
 ## License
 
