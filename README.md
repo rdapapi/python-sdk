@@ -77,31 +77,71 @@ print(domain.entities.registrant.email)         # "registrant@google.com"
 ## Error handling
 
 ```python
-from rdapapi import RdapApi, NotFoundError, RateLimitError, AuthenticationError
+from rdapapi import RdapApi, NotFoundError, NotSupportedError, RateLimitError, AuthenticationError
 
 api = RdapApi("your-api-key")
 
 try:
-    domain = api.domain("nonexistent.example")
+    domain = api.domain("example.nope")
+except NotSupportedError:
+    print("The TLD is not covered by RDAP.")
 except NotFoundError:
-    print("Domain not found")
+    print("The domain is not registered.")
 except RateLimitError as e:
     print(f"Rate limited. Retry after {e.retry_after}s")
 except AuthenticationError:
     print("Invalid API key")
 ```
 
-All exceptions inherit from `RdapApiError` and include `status_code`, `error`, and `message` attributes.
+`NotSupportedError` is a subclass of `NotFoundError`, so catching `NotFoundError` still handles both cases. All exceptions inherit from `RdapApiError` and include `status_code`, `error`, and `message` attributes.
 
 | Exception | HTTP Status | When |
 |-----------|------------|------|
 | `ValidationError` | 400 | Invalid input format |
 | `AuthenticationError` | 401 | Missing or invalid API key |
 | `SubscriptionRequiredError` | 403 | No active subscription |
-| `NotFoundError` | 404 | No RDAP data found |
+| `NotFoundError` | 404 | Namespace is covered but no record exists |
+| `NotSupportedError` | 404 | Namespace (TLD, IP range, ASN range) is not covered by RDAP |
 | `RateLimitError` | 429 | Rate limit or quota exceeded |
 | `UpstreamError` | 502 | Upstream RDAP server error |
 | `TemporarilyUnavailableError` | 503 | Domain data temporarily unavailable |
+
+## Supported TLDs catalog
+
+List every TLD the API can resolve, with the date support was added and a qualitative summary of which fields the registry's RDAP server populates. Does not count against your monthly quota.
+
+```python
+tlds = api.tlds()
+print(f"{tlds.meta.count} TLDs, coverage {tlds.meta.coverage:.0%}")
+
+for tld in tlds.data:
+    availability = tld.field_availability
+    if availability is not None:
+        print(f"{tld.tld}: expires_at={availability.expires_at}")
+```
+
+Filter to recent additions or to a single registry:
+
+```python
+recent = api.tlds(since="2026-04-01T00:00:00Z")
+verisign = api.tlds(server="rdap.verisign.com")
+```
+
+Pass back the previous `etag` to skip the transfer when nothing has changed:
+
+```python
+first = api.tlds()
+later = api.tlds(if_none_match=first.etag)
+if later is None:
+    print("No change since last poll")
+```
+
+Look up a single TLD:
+
+```python
+com = api.tld("com")
+print(com.data.rdap_server_host)  # "rdap.verisign.com"
+```
 
 ## Async support
 

@@ -7,6 +7,7 @@ import respx
 from rdapapi import (
     AuthenticationError,
     NotFoundError,
+    NotSupportedError,
     RateLimitError,
     RdapApi,
     RdapApiError,
@@ -15,7 +16,7 @@ from rdapapi import (
     UpstreamError,
     ValidationError,
 )
-from rdapapi.models import BulkDomainResponse
+from rdapapi.models import BulkDomainResponse, TldListResponse, TldResponse
 
 BASE_URL = "https://rdapapi.io/api/v1"
 
@@ -312,6 +313,42 @@ def test_not_found_error():
         api.domain("nonexistent.example")
 
     assert exc_info.value.status_code == 404
+    assert not isinstance(exc_info.value, NotSupportedError)
+    api.close()
+
+
+@respx.mock
+def test_not_supported_error_raised_on_unsupported_tld():
+    respx.get(f"{BASE_URL}/domain/example.nope").mock(
+        return_value=httpx.Response(
+            404,
+            json={"error": "not_supported", "message": "The TLD '.nope' is not supported."},
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(NotSupportedError) as exc_info:
+        api.domain("example.nope")
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.error == "not_supported"
+    # Backwards compatible: NotSupportedError IS a NotFoundError.
+    assert isinstance(exc_info.value, NotFoundError)
+    api.close()
+
+
+@respx.mock
+def test_not_supported_error_on_ip_lookup():
+    respx.get(f"{BASE_URL}/ip/203.0.113.1").mock(
+        return_value=httpx.Response(
+            404,
+            json={"error": "not_supported", "message": "No RIR covers this IP range."},
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(NotSupportedError):
+        api.ip("203.0.113.1")
     api.close()
 
 
@@ -574,4 +611,151 @@ def test_bulk_domains_rate_limit_error():
         api.bulk_domains(["google.com"])
 
     assert exc_info.value.retry_after == 60
+    api.close()
+
+
+# === TLDs ===
+
+TLDS_RESPONSE = {
+    "data": [
+        {
+            "tld": "com",
+            "supported_since": "2026-03-07T00:00:00Z",
+            "rdap_server_host": "rdap.verisign.com",
+            "rdap_server_url": "https://rdap.verisign.com/com/v1/",
+            "field_availability": {
+                "registrar": "sometimes",
+                "registered_at": "always",
+                "expires_at": "always",
+                "nameservers": "always",
+                "status": "always",
+            },
+        },
+        {
+            "tld": "fr",
+            "supported_since": "2026-03-07T00:00:00Z",
+            "rdap_server_host": "rdap.nic.fr",
+            "rdap_server_url": "https://rdap.nic.fr/",
+            "field_availability": None,
+        },
+    ],
+    "meta": {
+        "computed_at": "2026-04-22T10:00:00Z",
+        "count": 2,
+        "coverage": 0.5,
+        "thresholds": {"always": 0.99, "usually": 0.8, "sometimes": 0.0},
+    },
+}
+
+TLD_RESPONSE = {
+    "data": {
+        "tld": "com",
+        "supported_since": "2026-03-07T00:00:00Z",
+        "rdap_server_host": "rdap.verisign.com",
+        "rdap_server_url": "https://rdap.verisign.com/com/v1/",
+        "field_availability": {
+            "registrar": "sometimes",
+            "registered_at": "always",
+            "expires_at": "always",
+            "nameservers": "always",
+            "status": "always",
+        },
+    },
+    "meta": {
+        "computed_at": "2026-04-22T10:00:00Z",
+        "thresholds": {"always": 0.99, "usually": 0.8, "sometimes": 0.0},
+    },
+}
+
+
+@respx.mock
+def test_tlds_list():
+    respx.get(f"{BASE_URL}/tlds").mock(return_value=httpx.Response(200, json=TLDS_RESPONSE, headers={"ETag": '"abc"'}))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    result = api.tlds()
+
+    assert isinstance(result, TldListResponse)
+    assert result.meta.count == 2
+    assert result.meta.coverage == 0.5
+    assert result.meta.thresholds.always == 0.99
+    assert result.data[0].tld == "com"
+    assert result.data[0].field_availability is not None
+    assert result.data[0].field_availability.registered_at == "always"
+    assert result.data[1].field_availability is None
+    assert result.etag == '"abc"'
+    api.close()
+
+
+@respx.mock
+def test_tlds_list_with_since_and_server():
+    route = respx.get(f"{BASE_URL}/tlds").mock(return_value=httpx.Response(200, json=TLDS_RESPONSE))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    api.tlds(since="2026-04-01T00:00:00Z", server="rdap.verisign.com")
+
+    request = route.calls[0].request
+    assert request.url.params["since"] == "2026-04-01T00:00:00Z"
+    assert request.url.params["server"] == "rdap.verisign.com"
+    api.close()
+
+
+@respx.mock
+def test_tlds_list_304_returns_none():
+    respx.get(f"{BASE_URL}/tlds").mock(return_value=httpx.Response(304))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    result = api.tlds(if_none_match='"abc"')
+
+    assert result is None
+    api.close()
+
+
+@respx.mock
+def test_tlds_list_sends_if_none_match_header():
+    route = respx.get(f"{BASE_URL}/tlds").mock(return_value=httpx.Response(304))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    api.tlds(if_none_match='"etag-value"')
+
+    assert route.calls[0].request.headers["if-none-match"] == '"etag-value"'
+    api.close()
+
+
+@respx.mock
+def test_tld_show():
+    respx.get(f"{BASE_URL}/tlds/com").mock(
+        return_value=httpx.Response(200, json=TLD_RESPONSE, headers={"ETag": '"com-1"'})
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    result = api.tld("com")
+
+    assert isinstance(result, TldResponse)
+    assert result.data.tld == "com"
+    assert result.meta.thresholds.usually == 0.8
+    assert result.etag == '"com-1"'
+    api.close()
+
+
+@respx.mock
+def test_tld_show_304_returns_none():
+    respx.get(f"{BASE_URL}/tlds/com").mock(return_value=httpx.Response(304))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    assert api.tld("com", if_none_match='"com-1"') is None
+    api.close()
+
+
+@respx.mock
+def test_tld_show_not_found():
+    respx.get(f"{BASE_URL}/tlds/nope").mock(
+        return_value=httpx.Response(
+            404, json={"error": "not_found", "message": "No RDAP server is registered for the TLD 'nope'."}
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(NotFoundError):
+        api.tld("nope")
     api.close()

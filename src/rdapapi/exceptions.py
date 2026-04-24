@@ -7,6 +7,7 @@ __all__ = [
     "AuthenticationError",
     "SubscriptionRequiredError",
     "NotFoundError",
+    "NotSupportedError",
     "ValidationError",
     "RateLimitError",
     "TemporarilyUnavailableError",
@@ -39,7 +40,20 @@ class SubscriptionRequiredError(RdapApiError):
 
 
 class NotFoundError(RdapApiError):
-    """Raised when no RDAP data is found for the query (HTTP 404)."""
+    """Raised when no RDAP data is found for the query (HTTP 404).
+
+    Returned when the namespace (TLD, IP range, ASN range, nameserver TLD, entity
+    handle pattern) is covered by an RDAP server but no matching record exists.
+    """
+
+
+class NotSupportedError(NotFoundError):
+    """Raised when the query targets a namespace not covered by RDAP (HTTP 404).
+
+    Returned when there is no RDAP server for the TLD, the IP/ASN range, or the
+    entity handle pattern. Inherits from :class:`NotFoundError` so existing
+    catch-all ``except NotFoundError`` blocks keep working.
+    """
 
 
 class ValidationError(RdapApiError):

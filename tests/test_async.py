@@ -8,11 +8,12 @@ from rdapapi import (
     AsyncRdapApi,
     AuthenticationError,
     NotFoundError,
+    NotSupportedError,
     RateLimitError,
     SubscriptionRequiredError,
     TemporarilyUnavailableError,
 )
-from rdapapi.models import BulkDomainResponse
+from rdapapi.models import BulkDomainResponse, TldListResponse, TldResponse
 
 BASE_URL = "https://rdapapi.io/api/v1"
 
@@ -336,3 +337,119 @@ async def test_async_bulk_domains_with_follow():
 
     body = json.loads(route.calls[0].request.content)
     assert body["follow"] is True
+
+
+# === Async TLDs + NotSupportedError ===
+
+TLDS_RESPONSE = {
+    "data": [
+        {
+            "tld": "com",
+            "supported_since": "2026-03-07T00:00:00Z",
+            "rdap_server_host": "rdap.verisign.com",
+            "rdap_server_url": "https://rdap.verisign.com/com/v1/",
+            "field_availability": {
+                "registrar": "sometimes",
+                "registered_at": "always",
+                "expires_at": "always",
+                "nameservers": "always",
+                "status": "always",
+            },
+        },
+    ],
+    "meta": {
+        "computed_at": "2026-04-22T10:00:00Z",
+        "count": 1,
+        "coverage": 1.0,
+        "thresholds": {"always": 0.99, "usually": 0.8, "sometimes": 0.0},
+    },
+}
+
+TLD_RESPONSE = {
+    "data": {
+        "tld": "com",
+        "supported_since": "2026-03-07T00:00:00Z",
+        "rdap_server_host": "rdap.verisign.com",
+        "rdap_server_url": "https://rdap.verisign.com/com/v1/",
+        "field_availability": None,
+    },
+    "meta": {
+        "computed_at": "2026-04-22T10:00:00Z",
+        "thresholds": {"always": 0.99, "usually": 0.8, "sometimes": 0.0},
+    },
+}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_async_not_supported_error():
+    respx.get(f"{BASE_URL}/domain/example.nope").mock(
+        return_value=httpx.Response(
+            404, json={"error": "not_supported", "message": "The TLD '.nope' is not supported."}
+        )
+    )
+
+    async with AsyncRdapApi("test-key", base_url=BASE_URL) as api:
+        with pytest.raises(NotSupportedError) as exc_info:
+            await api.domain("example.nope")
+
+    assert isinstance(exc_info.value, NotFoundError)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_async_tlds_list():
+    respx.get(f"{BASE_URL}/tlds").mock(return_value=httpx.Response(200, json=TLDS_RESPONSE, headers={"ETag": '"abc"'}))
+
+    async with AsyncRdapApi("test-key", base_url=BASE_URL) as api:
+        result = await api.tlds()
+
+    assert isinstance(result, TldListResponse)
+    assert result.data[0].tld == "com"
+    assert result.etag == '"abc"'
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_async_tlds_list_with_filters():
+    route = respx.get(f"{BASE_URL}/tlds").mock(return_value=httpx.Response(200, json=TLDS_RESPONSE))
+
+    async with AsyncRdapApi("test-key", base_url=BASE_URL) as api:
+        await api.tlds(since="2026-04-01T00:00:00Z", server="rdap.verisign.com")
+
+    request = route.calls[0].request
+    assert request.url.params["since"] == "2026-04-01T00:00:00Z"
+    assert request.url.params["server"] == "rdap.verisign.com"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_async_tlds_list_304_returns_none():
+    respx.get(f"{BASE_URL}/tlds").mock(return_value=httpx.Response(304))
+
+    async with AsyncRdapApi("test-key", base_url=BASE_URL) as api:
+        assert await api.tlds(if_none_match='"abc"') is None
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_async_tld_show():
+    respx.get(f"{BASE_URL}/tlds/com").mock(
+        return_value=httpx.Response(200, json=TLD_RESPONSE, headers={"ETag": '"com-1"'})
+    )
+
+    async with AsyncRdapApi("test-key", base_url=BASE_URL) as api:
+        result = await api.tld("com")
+
+    assert isinstance(result, TldResponse)
+    assert result.data.tld == "com"
+    assert result.etag == '"com-1"'
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_async_tld_show_304_returns_none():
+    respx.get(f"{BASE_URL}/tlds/com").mock(return_value=httpx.Response(304))
+
+    async with AsyncRdapApi("test-key", base_url=BASE_URL) as api:
+        assert await api.tld("com", if_none_match='"com-1"') is None

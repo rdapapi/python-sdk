@@ -5,6 +5,7 @@ from .client import AsyncRdapApi, RdapApi
 from .exceptions import (
     AuthenticationError,
     NotFoundError,
+    NotSupportedError,
     RateLimitError,
     RdapApiError,
     SubscriptionRequiredError,
@@ -24,6 +25,7 @@ from .models import (
     EntityAutnum,
     EntityNetwork,
     EntityResponse,
+    FieldAvailability,
     IpAddresses,
     IpResponse,
     Meta,
@@ -31,6 +33,12 @@ from .models import (
     PublicId,
     Registrar,
     Remark,
+    TldEntry,
+    TldListMeta,
+    TldListResponse,
+    TldMeta,
+    TldResponse,
+    TldThresholds,
 )
 
 __all__ = [
@@ -42,6 +50,7 @@ __all__ = [
     "AuthenticationError",
     "SubscriptionRequiredError",
     "NotFoundError",
+    "NotSupportedError",
     "ValidationError",
     "RateLimitError",
     "TemporarilyUnavailableError",
@@ -58,6 +67,7 @@ __all__ = [
     "EntityAutnum",
     "EntityNetwork",
     "EntityResponse",
+    "FieldAvailability",
     "IpAddresses",
     "IpResponse",
     "Meta",
@@ -65,4 +75,10 @@ __all__ = [
     "PublicId",
     "Registrar",
     "Remark",
+    "TldEntry",
+    "TldListMeta",
+    "TldListResponse",
+    "TldMeta",
+    "TldResponse",
+    "TldThresholds",
 ]

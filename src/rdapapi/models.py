@@ -19,6 +19,7 @@ __all__ = [
     "EntityAutnum",
     "EntityNetwork",
     "EntityResponse",
+    "FieldAvailability",
     "IpAddresses",
     "IpResponse",
     "Meta",
@@ -26,6 +27,12 @@ __all__ = [
     "PublicId",
     "Registrar",
     "Remark",
+    "TldEntry",
+    "TldListMeta",
+    "TldListResponse",
+    "TldMeta",
+    "TldResponse",
+    "TldThresholds",
 ]
 
 
@@ -247,6 +254,70 @@ class BulkDomainResponse(BaseModel):
 
     results: List[BulkDomainResult]
     summary: BulkDomainSummary
+
+
+class FieldAvailability(BaseModel):
+    """How often each common domain field is populated in a TLD's RDAP responses.
+
+    Each value is one of ``"always"``, ``"usually"``, ``"sometimes"``, or
+    ``"never"``. See :class:`TldThresholds` for the percentage cutoffs.
+    """
+
+    registrar: str
+    registered_at: str
+    expires_at: str
+    nameservers: str
+    status: str
+
+
+class TldEntry(BaseModel):
+    """A single TLD entry from the ``/tlds`` catalog."""
+
+    tld: str
+    supported_since: str
+    rdap_server_host: str
+    rdap_server_url: str
+    field_availability: Optional[FieldAvailability] = None
+
+
+class TldThresholds(BaseModel):
+    """Percentage cutoffs used to pick each availability label."""
+
+    always: float
+    usually: float
+    sometimes: float
+
+
+class TldListMeta(BaseModel):
+    """Metadata for a TLD list response."""
+
+    computed_at: str
+    count: int
+    coverage: float
+    thresholds: TldThresholds
+
+
+class TldMeta(BaseModel):
+    """Metadata for a single-TLD response."""
+
+    computed_at: str
+    thresholds: TldThresholds
+
+
+class TldListResponse(BaseModel):
+    """Response from ``GET /tlds``."""
+
+    data: List[TldEntry]
+    meta: TldListMeta
+    etag: Optional[str] = None
+
+
+class TldResponse(BaseModel):
+    """Response from ``GET /tlds/{tld}``."""
+
+    data: TldEntry
+    meta: TldMeta
+    etag: Optional[str] = None
 
 
 class EntityResponse(BaseModel):

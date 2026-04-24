@@ -10,6 +10,7 @@ from ._version import __version__
 from .exceptions import (
     AuthenticationError,
     NotFoundError,
+    NotSupportedError,
     RateLimitError,
     RdapApiError,
     SubscriptionRequiredError,
@@ -24,6 +25,8 @@ from .models import (
     EntityResponse,
     IpResponse,
     NameserverResponse,
+    TldListResponse,
+    TldResponse,
 )
 
 _DEFAULT_BASE_URL = "https://rdapapi.io/api/v1"
@@ -53,6 +56,9 @@ def _raise_for_status(response: httpx.Response) -> None:
         message = body.get("message", f"HTTP {response.status_code}")
         exc_class = _ERROR_MAP.get(response.status_code, RdapApiError)
 
+        if exc_class is NotFoundError and error == "not_supported":
+            exc_class = NotSupportedError
+
         kwargs: Dict[str, Any] = {
             "status_code": response.status_code,
             "error": error,
@@ -71,6 +77,15 @@ def _parse_bulk_response(data: dict) -> BulkDomainResponse:
         if result.get("status") == "success" and "data" in result and "meta" in result:
             result["data"]["meta"] = result.pop("meta")
     return BulkDomainResponse.model_validate(data)
+
+
+def _tlds_params(*, since: Optional[str], server: Optional[str]) -> Optional[Dict[str, str]]:
+    params: Dict[str, str] = {}
+    if since is not None:
+        params["since"] = since
+    if server is not None:
+        params["server"] = server
+    return params or None
 
 
 class RdapApi:
@@ -122,6 +137,22 @@ class RdapApi:
         _raise_for_status(response)
         return response.json()
 
+    def _conditional_get(
+        self,
+        path: str,
+        *,
+        params: Optional[Dict[str, str]] = None,
+        if_none_match: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        headers = {"If-None-Match": if_none_match} if if_none_match else None
+        response = self._client.get(path, params=params, headers=headers)
+        if response.status_code == 304:
+            return None
+        _raise_for_status(response)
+        payload = response.json()
+        payload["etag"] = response.headers.get("ETag")
+        return payload
+
     def domain(self, name: str, *, follow: bool = False) -> DomainResponse:
         """Look up RDAP registration data for a domain name."""
         params = {"follow": "true"} if follow else None
@@ -168,6 +199,39 @@ class RdapApi:
             body["follow"] = True
         data = self._post("/domains/bulk", body)
         return _parse_bulk_response(data)
+
+    def tlds(
+        self,
+        *,
+        since: Optional[str] = None,
+        server: Optional[str] = None,
+        if_none_match: Optional[str] = None,
+    ) -> Optional[TldListResponse]:
+        """List every TLD the API can resolve via RDAP.
+
+        Does not count against the monthly quota. Returns ``None`` when an
+        ``if_none_match`` tag is provided and matches the server's current
+        ``ETag`` (HTTP 304). Otherwise returns a :class:`TldListResponse` whose
+        ``etag`` attribute can be passed back on a later call to skip unchanged
+        transfers.
+        """
+        params = _tlds_params(since=since, server=server)
+        payload = self._conditional_get("/tlds", params=params, if_none_match=if_none_match)
+        if payload is None:
+            return None
+        return TldListResponse.model_validate(payload)
+
+    def tld(self, tld: str, *, if_none_match: Optional[str] = None) -> Optional[TldResponse]:
+        """Return catalog metadata for a single TLD.
+
+        Does not count against the monthly quota. Returns ``None`` on HTTP 304.
+        Raises :class:`NotFoundError` when no RDAP server is registered for the
+        TLD.
+        """
+        payload = self._conditional_get(f"/tlds/{tld}", if_none_match=if_none_match)
+        if payload is None:
+            return None
+        return TldResponse.model_validate(payload)
 
     def close(self) -> None:
         """Close the underlying HTTP client."""
@@ -229,6 +293,22 @@ class AsyncRdapApi:
         _raise_for_status(response)
         return response.json()
 
+    async def _conditional_get(
+        self,
+        path: str,
+        *,
+        params: Optional[Dict[str, str]] = None,
+        if_none_match: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        headers = {"If-None-Match": if_none_match} if if_none_match else None
+        response = await self._client.get(path, params=params, headers=headers)
+        if response.status_code == 304:
+            return None
+        _raise_for_status(response)
+        payload = response.json()
+        payload["etag"] = response.headers.get("ETag")
+        return payload
+
     async def domain(self, name: str, *, follow: bool = False) -> DomainResponse:
         """Look up RDAP registration data for a domain name."""
         params = {"follow": "true"} if follow else None
@@ -275,6 +355,33 @@ class AsyncRdapApi:
             body["follow"] = True
         data = await self._post("/domains/bulk", body)
         return _parse_bulk_response(data)
+
+    async def tlds(
+        self,
+        *,
+        since: Optional[str] = None,
+        server: Optional[str] = None,
+        if_none_match: Optional[str] = None,
+    ) -> Optional[TldListResponse]:
+        """List every TLD the API can resolve via RDAP.
+
+        Does not count against the monthly quota. Returns ``None`` on HTTP 304.
+        """
+        params = _tlds_params(since=since, server=server)
+        payload = await self._conditional_get("/tlds", params=params, if_none_match=if_none_match)
+        if payload is None:
+            return None
+        return TldListResponse.model_validate(payload)
+
+    async def tld(self, tld: str, *, if_none_match: Optional[str] = None) -> Optional[TldResponse]:
+        """Return catalog metadata for a single TLD.
+
+        Does not count against the monthly quota. Returns ``None`` on HTTP 304.
+        """
+        payload = await self._conditional_get(f"/tlds/{tld}", if_none_match=if_none_match)
+        if payload is None:
+            return None
+        return TldResponse.model_validate(payload)
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""
