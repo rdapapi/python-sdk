@@ -69,3 +69,4 @@ select = [
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["T201"]
+"canary.py" = ["T201"]
