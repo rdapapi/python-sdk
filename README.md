@@ -21,30 +21,30 @@ api = RdapApi("your-api-key")
 
 # Domain lookup
 domain = api.domain("google.com")
-print(domain.registrar.name)     # "MarkMonitor Inc."
-print(domain.dates.expires)      # "2028-09-14T04:00:00Z"
-print(domain.nameservers)        # ["ns1.google.com", ...]
-print(domain.dnssec)             # False, or None where the registry publishes no status
-print(domain.meta.source)        # "rdap", or "whois" for a TLD with no RDAP server
+print(domain.registrar.name)  # "MarkMonitor Inc."
+print(domain.dates.expires)  # "2028-09-14T04:00:00Z"
+print(domain.nameservers)  # ["ns1.google.com", ...]
+print(domain.dnssec)  # False, or None where the registry publishes no status
+print(domain.meta.source)  # "rdap", or "whois" for a TLD with no RDAP server
 
 # IP address lookup — pass an address or a CIDR block
 ip = api.ip("8.8.8.8")
-print(ip.name)                   # "GOGL"
-print(ip.cidr)                   # ["8.8.8.0/24"]
-print(ip.geofeed)                # RFC 8805 geofeed URL, or None
+print(ip.name)  # "GOGL"
+print(ip.cidr)  # ["8.8.8.0/24"]
+print(ip.geofeed)  # RFC 8805 geofeed URL, or None
 
 # ASN lookup
 asn = api.asn(15169)
-print(asn.name)                  # "GOOGLE"
+print(asn.name)  # "GOOGLE"
 
 # Nameserver lookup
 ns = api.nameserver("ns1.google.com")
-print(ns.ip_addresses.v4)       # ["216.239.32.10"]
+print(ns.ip_addresses.v4)  # ["216.239.32.10"]
 
 # Entity lookup
 entity = api.entity("GOGL")
-print(entity.name)               # "Google LLC"
-print(entity.autnums[0].handle) # "AS15169"
+print(entity.name)  # "Google LLC"
+print(entity.autnums[0].handle)  # "AS15169"
 
 api.close()
 ```
@@ -74,7 +74,7 @@ For thin registries like `.com` and `.net`, the registry only returns basic regi
 ```python
 domain = api.domain("google.com", follow=True)
 print(domain.entities.registrant.organization)  # "Google LLC"
-print(domain.entities.registrant.email)         # "registrant@google.com"
+print(domain.entities.registrant.email)  # "registrant@google.com"
 ```
 
 ## WHOIS fallback
@@ -85,8 +85,8 @@ server and returned in the same shape. `meta.source` says which protocol answere
 
 ```python
 domain = api.domain("google.it")
-print(domain.meta.source)   # "whois"
-print(domain.meta.server)   # "whois.nic.it"
+print(domain.meta.source)  # "whois"
+print(domain.meta.server)  # "whois.nic.it"
 ```
 
 A WHOIS registry publishes fewer fields — several give no dates, some no registrar — and
@@ -261,6 +261,7 @@ print(com.data.server)  # "rdap.verisign.com"
 import asyncio
 from rdapapi import AsyncRdapApi
 
+
 async def main():
     async with AsyncRdapApi("your-api-key") as api:
         domain, ip, asn = await asyncio.gather(
@@ -269,6 +270,7 @@ async def main():
             api.asn(15169),
         )
         print(f"{domain.domain}: {domain.registrar.name}")
+
 
 asyncio.run(main())
 ```
@@ -293,7 +295,7 @@ json_str = domain.model_dump_json()
 api = RdapApi(
     "your-api-key",
     base_url="https://rdapapi.io/api/v1",  # default
-    timeout=30,                              # seconds, default
+    timeout=30,  # seconds, default
 )
 ```
 
