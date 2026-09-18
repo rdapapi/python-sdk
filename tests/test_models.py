@@ -7,7 +7,9 @@ from rdapapi import (
     DomainResponse,
     EntityResponse,
     IpResponse,
+    Meta,
     NameserverResponse,
+    TldEntry,
 )
 
 
@@ -40,6 +42,8 @@ def test_domain_response_parses():
             },
         },
         "meta": {
+            "server": "rdap.example.com",
+            "source": "rdap",
             "rdap_server": "https://rdap.example.com/",
             "raw_rdap_url": "https://rdap.example.com/domain/example.com",
             "cached": False,
@@ -70,6 +74,8 @@ def test_domain_response_empty_entities():
         "dnssec": False,
         "entities": {},
         "meta": {
+            "server": "rdap.example.com",
+            "source": "rdap",
             "rdap_server": "https://rdap.example.com/",
             "raw_rdap_url": "https://rdap.example.com/domain/test.com",
             "cached": True,
@@ -102,6 +108,8 @@ def test_ip_response_parses():
         "remarks": [{"title": "description", "description": "Test network"}],
         "port43": "whois.apnic.net",
         "meta": {
+            "server": "rdap.apnic.net",
+            "source": "rdap",
             "rdap_server": "https://rdap.apnic.net/",
             "raw_rdap_url": "https://rdap.apnic.net/ip/1.0.0.0",
             "cached": False,
@@ -129,6 +137,8 @@ def test_asn_response_parses():
         "remarks": [],
         "port43": "whois.arin.net",
         "meta": {
+            "server": "rdap.arin.net",
+            "source": "rdap",
             "rdap_server": "https://rdap.arin.net/registry/",
             "raw_rdap_url": "https://rdap.arin.net/registry/autnum/15169",
             "cached": False,
@@ -153,6 +163,8 @@ def test_nameserver_response_parses():
         "dates": {"registered": None, "expires": None, "updated": None},
         "entities": {},
         "meta": {
+            "server": "rdap.verisign.com",
+            "source": "rdap",
             "rdap_server": "https://rdap.verisign.com/com/v1/",
             "raw_rdap_url": "https://rdap.verisign.com/com/v1/nameserver/ns1.google.com",
             "cached": False,
@@ -210,6 +222,8 @@ def test_entity_response_with_autnums_and_networks():
             },
         ],
         "meta": {
+            "server": "rdap.arin.net",
+            "source": "rdap",
             "rdap_server": "https://rdap.arin.net/registry/",
             "raw_rdap_url": "https://rdap.arin.net/registry/entity/GOGL",
             "cached": False,
@@ -243,6 +257,8 @@ def test_model_dump_roundtrip():
         "remarks": [],
         "port43": "whois.arin.net",
         "meta": {
+            "server": "rdap.arin.net",
+            "source": "rdap",
             "rdap_server": "https://rdap.arin.net/registry/",
             "raw_rdap_url": "https://rdap.arin.net/registry/autnum/15169",
             "cached": False,
@@ -311,6 +327,8 @@ def test_bulk_domain_response_parses():
                     "dnssec": False,
                     "entities": {},
                     "meta": {
+                        "server": "rdap.verisign.com",
+                        "source": "rdap",
                         "rdap_server": "https://rdap.verisign.com/com/v1/",
                         "raw_rdap_url": "https://rdap.verisign.com/com/v1/domain/google.com",
                         "cached": False,
@@ -340,3 +358,145 @@ def test_bulk_domain_response_parses():
     assert result.results[1].status == "error"
     assert result.results[1].error == "invalid_domain"
     assert result.results[1].data is None
+
+
+def test_domain_response_dnssec_null_when_registry_publishes_no_status():
+    data = {
+        "domain": "example.gg",
+        "unicode_name": None,
+        "handle": None,
+        "status": [],
+        "registrar": {"name": None, "iana_id": None, "abuse_email": None, "abuse_phone": None, "url": None},
+        "dates": {"registered": None, "expires": None, "updated": None},
+        "nameservers": [],
+        "dnssec": None,
+        "entities": {},
+        "meta": {"server": "rdap.gg", "source": "rdap"},
+    }
+
+    result = DomainResponse.model_validate(data)
+
+    assert result.dnssec is None
+
+
+def test_domain_response_redaction():
+    data = {
+        "domain": "google.co.uk",
+        "unicode_name": None,
+        "handle": None,
+        "status": ["active"],
+        "registrar": {"name": None, "iana_id": None, "abuse_email": None, "abuse_phone": None, "url": None},
+        "dates": {"registered": None, "expires": None, "updated": None},
+        "nameservers": [],
+        "dnssec": False,
+        "entities": {},
+        "redacted": {
+            "handle": "replacementValue",
+            "registrar": {"iana_id": "removal"},
+            "entities": {"registrant": {"name": "emptyValue", "email": "someFutureMethod"}},
+        },
+        "meta": {"server": "rdap.nominet.uk", "source": "rdap"},
+    }
+
+    result = DomainResponse.model_validate(data)
+
+    assert result.redacted is not None
+    assert result.redacted.handle == "replacementValue"
+    assert result.redacted.registrar["iana_id"] == "removal"
+    assert result.redacted.entities["registrant"]["name"] == "emptyValue"
+    # An unrecognised method is passed through rather than rejected.
+    assert result.redacted.entities["registrant"]["email"] == "someFutureMethod"
+
+
+def test_domain_response_without_redaction():
+    data = {
+        "domain": "example.com",
+        "unicode_name": None,
+        "handle": None,
+        "status": [],
+        "registrar": {"name": None, "iana_id": None, "abuse_email": None, "abuse_phone": None, "url": None},
+        "dates": {"registered": None, "expires": None, "updated": None},
+        "nameservers": [],
+        "dnssec": False,
+        "entities": {},
+        "meta": {"server": "rdap.verisign.com", "source": "rdap"},
+    }
+
+    result = DomainResponse.model_validate(data)
+
+    assert result.redacted is None
+
+
+def test_meta_answered_over_whois_omits_the_rdap_fields():
+    meta = Meta.model_validate({"server": "whois.nic.it", "source": "whois", "cached": True})
+
+    assert meta.source == "whois"
+    assert meta.rdap_server is None
+    assert meta.raw_rdap_url is None
+    # A field the server never sent is distinguishable from one it sent as null.
+    assert "raw_rdap_url" not in meta.model_fields_set
+    assert "cached" in meta.model_fields_set
+
+
+def test_ip_response_geofeed():
+    data = {
+        "handle": "NET-1-0-0-0-1",
+        "name": "TEST-NET",
+        "type": None,
+        "start_address": "1.0.0.0",
+        "end_address": "1.0.0.255",
+        "ip_version": "v4",
+        "parent_handle": None,
+        "country": None,
+        "status": [],
+        "dates": {"registered": None, "expires": None, "updated": None},
+        "entities": {},
+        "cidr": ["1.0.0.0/24"],
+        "geofeed": "https://geofeed.example.net/geofeed.csv",
+        "remarks": [],
+        "port43": None,
+        "meta": {"server": "rdap.apnic.net", "source": "rdap"},
+    }
+
+    result = IpResponse.model_validate(data)
+
+    assert result.geofeed == "https://geofeed.example.net/geofeed.csv"
+
+
+def test_asn_response_country():
+    data = {
+        "handle": "AS15169",
+        "name": "GOOGLE",
+        "type": None,
+        "start_autnum": 15169,
+        "end_autnum": 15169,
+        "country": "US",
+        "status": [],
+        "dates": {"registered": None, "expires": None, "updated": None},
+        "entities": {},
+        "remarks": [],
+        "port43": None,
+        "meta": {"server": "rdap.arin.net", "source": "rdap"},
+    }
+
+    result = AsnResponse.model_validate(data)
+
+    assert result.country == "US"
+
+
+def test_tld_entry_served_over_whois():
+    entry = TldEntry.model_validate(
+        {
+            "tld": "it",
+            "protocol": "whois",
+            "supported_since": "2026-05-13T11:21:03Z",
+            "server": "whois.nic.it",
+            "rdap_server_host": None,
+            "rdap_server_url": None,
+            "field_availability": None,
+        }
+    )
+
+    assert entry.protocol == "whois"
+    assert entry.server == "whois.nic.it"
+    assert entry.rdap_server_host is None

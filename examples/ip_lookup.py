@@ -10,6 +10,12 @@ print(f"Network: {ip.name} ({ip.handle})")
 print(f"Range: {ip.start_address} - {ip.end_address}")
 print(f"CIDR: {', '.join(ip.cidr)}")
 print(f"Version: {ip.ip_version}")
+print(f"Geofeed: {ip.geofeed}")  # RFC 8805 URL as published, or None
+print()
+
+# A CIDR block returns that network, so different prefix lengths can differ.
+block = api.ip("8.8.8.0/24")
+print(f"Block: {block.handle} ({block.name})")
 print()
 
 # ASN lookup

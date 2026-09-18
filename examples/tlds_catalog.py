@@ -13,12 +13,10 @@ print()
 for tld in tlds.data[:5]:
     availability = tld.field_availability
     if availability is None:
-        print(f".{tld.tld} via {tld.rdap_server_host} (not enough data yet)")
+        # No stats yet, or the TLD is served over WHOIS, which is not measured.
+        print(f".{tld.tld} via {tld.server} ({tld.protocol}, no field stats)")
     else:
-        print(
-            f".{tld.tld} via {tld.rdap_server_host}: "
-            f"registrar={availability.registrar}, expires_at={availability.expires_at}"
-        )
+        print(f".{tld.tld} via {tld.server}: registrar={availability.registrar}, expires_at={availability.expires_at}")
 
 print()
 

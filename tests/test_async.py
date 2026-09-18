@@ -1,5 +1,8 @@
 """Tests for the asynchronous RDAP API client."""
 
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
+
 import httpx
 import pytest
 import respx
@@ -9,11 +12,12 @@ from rdapapi import (
     AuthenticationError,
     NotFoundError,
     NotSupportedError,
+    PlanUpgradeRequiredError,
     RateLimitError,
     SubscriptionRequiredError,
     TemporarilyUnavailableError,
 )
-from rdapapi.models import BulkDomainResponse, TldListResponse, TldResponse
+from rdapapi.models import BulkDomainResponse, PingResponse, TldListResponse, TldResponse
 
 BASE_URL = "https://rdapapi.io/api/v1"
 
@@ -28,6 +32,8 @@ DOMAIN_RESPONSE = {
     "dnssec": False,
     "entities": {},
     "meta": {
+        "server": "rdap.verisign.com",
+        "source": "rdap",
         "rdap_server": "https://rdap.verisign.com/com/v1/",
         "raw_rdap_url": "https://rdap.verisign.com/com/v1/domain/google.com",
         "cached": False,
@@ -47,6 +53,8 @@ ASN_RESPONSE = {
     "remarks": [],
     "port43": "whois.arin.net",
     "meta": {
+        "server": "rdap.arin.net",
+        "source": "rdap",
         "rdap_server": "https://rdap.arin.net/registry/",
         "raw_rdap_url": "https://rdap.arin.net/registry/autnum/15169",
         "cached": False,
@@ -71,6 +79,8 @@ IP_RESPONSE = {
     "remarks": [],
     "port43": "whois.arin.net",
     "meta": {
+        "server": "rdap.arin.net",
+        "source": "rdap",
         "rdap_server": "https://rdap.arin.net/registry/",
         "raw_rdap_url": "https://rdap.arin.net/registry/ip/8.8.8.8",
         "cached": False,
@@ -87,6 +97,8 @@ NS_RESPONSE = {
     "dates": {"registered": None, "expires": None, "updated": None},
     "entities": {},
     "meta": {
+        "server": "rdap.verisign.com",
+        "source": "rdap",
         "rdap_server": "https://rdap.verisign.com/com/v1/",
         "raw_rdap_url": "https://rdap.verisign.com/com/v1/nameserver/ns1.google.com",
         "cached": False,
@@ -113,6 +125,8 @@ ENTITY_RESPONSE = {
     "autnums": [],
     "networks": [],
     "meta": {
+        "server": "rdap.arin.net",
+        "source": "rdap",
         "rdap_server": "https://rdap.arin.net/registry/",
         "raw_rdap_url": "https://rdap.arin.net/registry/entity/GOGL",
         "cached": False,
@@ -224,6 +238,25 @@ async def test_async_temporarily_unavailable_error():
     assert exc_info.value.retry_after == 300
 
 
+@pytest.mark.asyncio
+@respx.mock
+async def test_async_retry_after_http_date_header():
+    when = datetime.now(timezone.utc) + timedelta(seconds=120)
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(
+            429,
+            json={"error": "too_many_requests", "message": "Slow down."},
+            headers={"Retry-After": format_datetime(when, usegmt=True)},
+        )
+    )
+
+    async with AsyncRdapApi("test-key", base_url=BASE_URL) as api:
+        with pytest.raises(RateLimitError) as exc_info:
+            await api.domain("test.com")
+
+    assert 115 <= exc_info.value.retry_after <= 120
+
+
 # === Async Bulk Domain Lookups ===
 
 BULK_RESPONSE = {
@@ -249,6 +282,8 @@ BULK_RESPONSE = {
                 "entities": {},
             },
             "meta": {
+                "server": "rdap.verisign.com",
+                "source": "rdap",
                 "rdap_server": "https://rdap.verisign.com/com/v1/",
                 "raw_rdap_url": "https://rdap.verisign.com/com/v1/domain/google.com",
                 "cached": False,
@@ -346,6 +381,8 @@ TLDS_RESPONSE = {
         {
             "tld": "com",
             "supported_since": "2026-03-07T00:00:00Z",
+            "protocol": "rdap",
+            "server": "rdap.verisign.com",
             "rdap_server_host": "rdap.verisign.com",
             "rdap_server_url": "https://rdap.verisign.com/com/v1/",
             "field_availability": {
@@ -369,6 +406,8 @@ TLD_RESPONSE = {
     "data": {
         "tld": "com",
         "supported_since": "2026-03-07T00:00:00Z",
+        "protocol": "rdap",
+        "server": "rdap.verisign.com",
         "rdap_server_host": "rdap.verisign.com",
         "rdap_server_url": "https://rdap.verisign.com/com/v1/",
         "field_availability": None,
@@ -453,3 +492,59 @@ async def test_async_tld_show_304_returns_none():
 
     async with AsyncRdapApi("test-key", base_url=BASE_URL) as api:
         assert await api.tld("com", if_none_match='"com-1"') is None
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_async_ping():
+    respx.get(f"{BASE_URL}/ping").mock(return_value=httpx.Response(200, json={"status": "ok"}))
+
+    async with AsyncRdapApi("test-key", base_url=BASE_URL) as api:
+        result = await api.ping()
+
+    assert isinstance(result, PingResponse)
+    assert result.status == "ok"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_async_domain_refusing_whois_fallback():
+    route = respx.get(f"{BASE_URL}/domain/google.it", params={"whois": "false"}).mock(
+        return_value=httpx.Response(
+            404, json={"error": "not_supported", "message": "Unsupported TLD for domain: google.it"}
+        )
+    )
+
+    async with AsyncRdapApi("test-key", base_url=BASE_URL) as api:
+        with pytest.raises(NotSupportedError):
+            await api.domain("google.it", whois=False)
+
+    assert route.called
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_async_bulk_domains_whois_false_sent_in_body():
+    import json
+
+    route = respx.post(f"{BASE_URL}/domains/bulk").mock(return_value=httpx.Response(200, json=BULK_RESPONSE))
+
+    async with AsyncRdapApi("test-key", base_url=BASE_URL) as api:
+        await api.bulk_domains(["google.it"], whois=False)
+
+    body = json.loads(route.calls[0].request.content)
+    assert body["whois"] is False
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_async_plan_upgrade_required_error():
+    respx.post(f"{BASE_URL}/domains/bulk").mock(
+        return_value=httpx.Response(
+            403, json={"error": "plan_upgrade_required", "message": "Bulk lookups require a Pro or Business plan."}
+        )
+    )
+
+    async with AsyncRdapApi("test-key", base_url=BASE_URL) as api:
+        with pytest.raises(PlanUpgradeRequiredError):
+            await api.bulk_domains(["google.com"])

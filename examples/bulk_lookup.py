@@ -16,6 +16,8 @@ for r in result.results:
     if r.status == "success":
         print(f"  {r.data.domain}: registrar={r.data.registrar.name}, expires={r.data.dates.expires}")
     else:
-        print(f"  {r.domain}: {r.error} — {r.message}")
+        # A failed entry names the upstream that was tried, when one was chosen.
+        server = r.meta.server if r.meta else "no upstream"
+        print(f"  {r.domain}: {r.error} — {r.message} ({server})")
 
 api.close()

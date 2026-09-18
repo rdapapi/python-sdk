@@ -1,16 +1,25 @@
 """Tests for the synchronous RDAP API client."""
 
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
+
 import httpx
 import pytest
 import respx
 
 from rdapapi import (
     AuthenticationError,
+    GatewayTimeoutError,
+    MethodNotAllowedError,
     NotFoundError,
     NotSupportedError,
+    PayloadTooLargeError,
+    PlanUpgradeRequiredError,
     RateLimitError,
     RdapApi,
     RdapApiError,
+    RequestFailedError,
+    ServerError,
     SubscriptionRequiredError,
     TemporarilyUnavailableError,
     UpstreamError,
@@ -41,6 +50,8 @@ DOMAIN_RESPONSE = {
     "dnssec": False,
     "entities": {},
     "meta": {
+        "server": "rdap.verisign.com",
+        "source": "rdap",
         "rdap_server": "https://rdap.verisign.com/com/v1/",
         "raw_rdap_url": "https://rdap.verisign.com/com/v1/domain/google.com",
         "cached": True,
@@ -61,9 +72,12 @@ IP_RESPONSE = {
     "dates": {"registered": "2023-12-28T17:24:33-05:00", "expires": None, "updated": "2023-12-28T17:24:56-05:00"},
     "entities": {},
     "cidr": ["8.8.8.0/24"],
+    "geofeed": None,
     "remarks": [],
     "port43": "whois.arin.net",
     "meta": {
+        "server": "rdap.arin.net",
+        "source": "rdap",
         "rdap_server": "https://rdap.arin.net/registry/",
         "raw_rdap_url": "https://rdap.arin.net/registry/ip/8.8.8.8",
         "cached": False,
@@ -83,6 +97,8 @@ ASN_RESPONSE = {
     "remarks": [],
     "port43": "whois.arin.net",
     "meta": {
+        "server": "rdap.arin.net",
+        "source": "rdap",
         "rdap_server": "https://rdap.arin.net/registry/",
         "raw_rdap_url": "https://rdap.arin.net/registry/autnum/15169",
         "cached": False,
@@ -99,6 +115,8 @@ NS_RESPONSE = {
     "dates": {"registered": None, "expires": None, "updated": None},
     "entities": {},
     "meta": {
+        "server": "rdap.verisign.com",
+        "source": "rdap",
         "rdap_server": "https://rdap.verisign.com/com/v1/",
         "raw_rdap_url": "https://rdap.verisign.com/com/v1/nameserver/ns1.google.com",
         "cached": False,
@@ -145,6 +163,8 @@ ENTITY_RESPONSE = {
         },
     ],
     "meta": {
+        "server": "rdap.arin.net",
+        "source": "rdap",
         "rdap_server": "https://rdap.arin.net/registry/",
         "raw_rdap_url": "https://rdap.arin.net/registry/entity/GOGL",
         "cached": False,
@@ -299,6 +319,23 @@ def test_subscription_required_error():
         api.domain("test.com")
 
     assert exc_info.value.status_code == 403
+    api.close()
+
+
+@respx.mock
+def test_forbidden_is_a_subscription_required_error_branching_on_error():
+    """A 403 IP block shares the subscription class, so only ``error`` tells them apart."""
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(403, json={"error": "forbidden", "message": "This IP is temporarily blocked."})
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(SubscriptionRequiredError) as exc_info:
+        api.domain("test.com")
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.error == "forbidden"
+    assert not isinstance(exc_info.value, PlanUpgradeRequiredError)
     api.close()
 
 
@@ -492,6 +529,8 @@ BULK_RESPONSE = {
                 "entities": {},
             },
             "meta": {
+                "server": "rdap.verisign.com",
+                "source": "rdap",
                 "rdap_server": "https://rdap.verisign.com/com/v1/",
                 "raw_rdap_url": "https://rdap.verisign.com/com/v1/domain/google.com",
                 "cached": False,
@@ -621,6 +660,8 @@ TLDS_RESPONSE = {
         {
             "tld": "com",
             "supported_since": "2026-03-07T00:00:00Z",
+            "protocol": "rdap",
+            "server": "rdap.verisign.com",
             "rdap_server_host": "rdap.verisign.com",
             "rdap_server_url": "https://rdap.verisign.com/com/v1/",
             "field_availability": {
@@ -634,6 +675,8 @@ TLDS_RESPONSE = {
         {
             "tld": "fr",
             "supported_since": "2026-03-07T00:00:00Z",
+            "protocol": "rdap",
+            "server": "rdap.nic.fr",
             "rdap_server_host": "rdap.nic.fr",
             "rdap_server_url": "https://rdap.nic.fr/",
             "field_availability": None,
@@ -651,6 +694,8 @@ TLD_RESPONSE = {
     "data": {
         "tld": "com",
         "supported_since": "2026-03-07T00:00:00Z",
+        "protocol": "rdap",
+        "server": "rdap.verisign.com",
         "rdap_server_host": "rdap.verisign.com",
         "rdap_server_url": "https://rdap.verisign.com/com/v1/",
         "field_availability": {
@@ -758,4 +803,521 @@ def test_tld_show_not_found():
     api = RdapApi("test-key", base_url=BASE_URL)
     with pytest.raises(NotFoundError):
         api.tld("nope")
+    api.close()
+
+
+# === Health check ===
+
+
+@respx.mock
+def test_ping():
+    respx.get(f"{BASE_URL}/ping").mock(return_value=httpx.Response(200, json={"status": "ok"}))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    assert api.ping().status == "ok"
+    api.close()
+
+
+# === WHOIS fallback ===
+
+WHOIS_DOMAIN_RESPONSE = {
+    "domain": "google.it",
+    "unicode_name": None,
+    "handle": None,
+    "status": ["active"],
+    "registrar": {
+        "name": "MarkMonitor International Limited",
+        "iana_id": None,
+        "abuse_email": None,
+        "abuse_phone": None,
+        "url": "https://www.markmonitor.com/",
+    },
+    "dates": {"registered": "1999-12-10T00:00:00Z", "expires": "2027-04-21T00:00:00Z", "updated": None},
+    "nameservers": ["ns1.google.com"],
+    "dnssec": False,
+    "entities": {},
+    "meta": {
+        "server": "whois.nic.it",
+        "source": "whois",
+        "cached": True,
+        "cache_expires": "2026-09-19T11:24:58Z",
+    },
+}
+
+
+@respx.mock
+def test_domain_answered_over_whois():
+    respx.get(f"{BASE_URL}/domain/google.it").mock(return_value=httpx.Response(200, json=WHOIS_DOMAIN_RESPONSE))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    result = api.domain("google.it")
+
+    assert result.meta.source == "whois"
+    assert result.meta.server == "whois.nic.it"
+    assert result.meta.rdap_server is None
+    assert result.meta.raw_rdap_url is None
+    api.close()
+
+
+@respx.mock
+def test_domain_refusing_whois_fallback():
+    route = respx.get(f"{BASE_URL}/domain/google.it", params={"whois": "false"}).mock(
+        return_value=httpx.Response(
+            404, json={"error": "not_supported", "message": "Unsupported TLD for domain: google.it"}
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(NotSupportedError):
+        api.domain("google.it", whois=False)
+
+    assert route.called
+    api.close()
+
+
+@respx.mock
+def test_domain_follow_and_whois_params_travel_together():
+    route = respx.get(f"{BASE_URL}/domain/google.com", params={"follow": "true", "whois": "false"}).mock(
+        return_value=httpx.Response(200, json=DOMAIN_RESPONSE)
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    api.domain("google.com", follow=True, whois=False)
+
+    assert route.called
+    api.close()
+
+
+@respx.mock
+def test_bulk_domains_whois_false_sent_in_body():
+    route = respx.post(f"{BASE_URL}/domains/bulk").mock(return_value=httpx.Response(200, json=BULK_RESPONSE))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    api.bulk_domains(["google.it"], whois=False)
+
+    import json
+
+    body = json.loads(route.calls[0].request.content)
+    assert body["whois"] is False
+    api.close()
+
+
+@respx.mock
+def test_bulk_domains_default_omits_whois():
+    route = respx.post(f"{BASE_URL}/domains/bulk").mock(return_value=httpx.Response(200, json=BULK_RESPONSE))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    api.bulk_domains(["google.com"])
+
+    import json
+
+    assert "whois" not in json.loads(route.calls[0].request.content)
+    api.close()
+
+
+@respx.mock
+def test_bulk_failed_entry_keeps_its_partial_meta():
+    payload = {
+        "results": [
+            {
+                "domain": "example.com",
+                "status": "error",
+                "error": "lookup_failed",
+                "message": "RDAP lookup failed.",
+                "meta": {"server": "rdap.verisign.com", "source": "rdap"},
+            },
+        ],
+        "summary": {"total": 1, "successful": 0, "failed": 1},
+    }
+    respx.post(f"{BASE_URL}/domains/bulk").mock(return_value=httpx.Response(200, json=payload))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    result = api.bulk_domains(["example.com"])
+
+    assert result.results[0].data is None
+    assert result.results[0].meta is not None
+    assert result.results[0].meta.server == "rdap.verisign.com"
+    assert result.results[0].meta.cached is None
+    api.close()
+
+
+@respx.mock
+def test_bulk_successful_entry_exposes_meta_on_both_levels():
+    respx.post(f"{BASE_URL}/domains/bulk").mock(return_value=httpx.Response(200, json=BULK_RESPONSE))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    result = api.bulk_domains(["google.com"])
+
+    assert result.results[0].meta is not None
+    assert result.results[0].data is not None
+    assert result.results[0].meta.server == result.results[0].data.meta.server
+    api.close()
+
+
+# === IP lookups ===
+
+
+@respx.mock
+def test_ip_lookup_accepts_a_cidr_block():
+    route = respx.get(f"{BASE_URL}/ip/8.8.8.0/24").mock(return_value=httpx.Response(200, json=IP_RESPONSE))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    result = api.ip("8.8.8.0/24")
+
+    assert route.called
+    assert result.geofeed is None
+    api.close()
+
+
+@respx.mock
+def test_ip_lookup_exposes_geofeed():
+    payload = {**IP_RESPONSE, "geofeed": "https://geofeed.ipxo.com/geofeed.txt"}
+    respx.get(f"{BASE_URL}/ip/1.1.1.0/24").mock(return_value=httpx.Response(200, json=payload))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    result = api.ip("1.1.1.0/24")
+
+    assert result.geofeed == "https://geofeed.ipxo.com/geofeed.txt"
+    api.close()
+
+
+# === Error codes ===
+
+
+@respx.mock
+def test_plan_upgrade_required_error():
+    respx.post(f"{BASE_URL}/domains/bulk").mock(
+        return_value=httpx.Response(
+            403, json={"error": "plan_upgrade_required", "message": "Bulk lookups require a Pro or Business plan."}
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(PlanUpgradeRequiredError) as exc_info:
+        api.bulk_domains(["google.com"])
+
+    # Backwards compatible: PlanUpgradeRequiredError IS a SubscriptionRequiredError.
+    assert isinstance(exc_info.value, SubscriptionRequiredError)
+    api.close()
+
+
+@respx.mock
+def test_request_failed_error_carries_field_errors():
+    respx.post(f"{BASE_URL}/domains/bulk").mock(
+        return_value=httpx.Response(
+            422,
+            json={
+                "error": "request_failed",
+                "message": "The domains field must not have more than 10 items.",
+                "errors": {"domains": ["The domains field must not have more than 10 items."]},
+            },
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(RequestFailedError) as exc_info:
+        api.bulk_domains(["a.com"] * 11)
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.errors["domains"] == ["The domains field must not have more than 10 items."]
+    api.close()
+
+
+@respx.mock
+def test_request_failed_error_without_errors_object():
+    respx.post(f"{BASE_URL}/domains/bulk").mock(
+        return_value=httpx.Response(422, json={"error": "request_failed", "message": "Validation failed."})
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(RequestFailedError) as exc_info:
+        api.bulk_domains(["a.com"])
+
+    assert exc_info.value.errors == {}
+    api.close()
+
+
+@respx.mock
+def test_method_not_allowed_error():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(405, json={"error": "method_not_allowed", "message": "Method not allowed."})
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(MethodNotAllowedError):
+        api.domain("test.com")
+    api.close()
+
+
+@respx.mock
+def test_payload_too_large_error():
+    respx.post(f"{BASE_URL}/domains/bulk").mock(
+        return_value=httpx.Response(413, json={"error": "payload_too_large", "message": "Payload too large."})
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(PayloadTooLargeError):
+        api.bulk_domains(["a.com"])
+    api.close()
+
+
+@respx.mock
+def test_gateway_timeout_error():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(
+            504, json={"error": "gateway_timeout", "message": "The request did not complete in time."}
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(GatewayTimeoutError) as exc_info:
+        api.domain("test.com")
+
+    assert isinstance(exc_info.value, ServerError)
+    api.close()
+
+
+@respx.mock
+def test_unmapped_server_error():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(500, json={"error": "server_error", "message": "Something went wrong."})
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(ServerError) as exc_info:
+        api.domain("test.com")
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.error == "server_error"
+    api.close()
+
+
+@respx.mock
+def test_non_json_error_body_from_the_edge_is_a_server_error():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(return_value=httpx.Response(502, html="<html>Bad gateway</html>"))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(UpstreamError) as exc_info:
+        api.domain("test.com")
+
+    assert isinstance(exc_info.value, ServerError)
+    assert exc_info.value.error == "unknown_error"
+    api.close()
+
+
+@respx.mock
+def test_json_error_body_that_is_not_an_object():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(return_value=httpx.Response(503, json=["nope"]))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(TemporarilyUnavailableError) as exc_info:
+        api.domain("test.com")
+
+    assert exc_info.value.error == "unknown_error"
+    assert exc_info.value.retry_after is None
+    api.close()
+
+
+@respx.mock
+def test_retry_after_read_from_the_body():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(
+            429,
+            json={"error": "rate_limit_exceeded", "message": "Rate limit exceeded.", "retry_after": 30},
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(RateLimitError) as exc_info:
+        api.domain("test.com")
+
+    assert exc_info.value.retry_after == 30
+    api.close()
+
+
+@respx.mock
+def test_retry_after_on_upstream_error():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(
+            502,
+            json={"error": "lookup_failed", "message": "RDAP lookup failed.", "retry_after": 60},
+            headers={"Retry-After": "60"},
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(UpstreamError) as exc_info:
+        api.domain("test.com")
+
+    assert exc_info.value.retry_after == 60
+    api.close()
+
+
+def _http_date(seconds_from_now: int, *, tz: bool = True) -> str:
+    """An RFC 9110 HTTP-date that many seconds away, as a registry would send it."""
+    when = datetime.now(timezone.utc) + timedelta(seconds=seconds_from_now)
+    return format_datetime(when, usegmt=True) if tz else format_datetime(when.replace(tzinfo=None))
+
+
+@respx.mock
+def test_retry_after_http_date_header_is_read_as_seconds():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(
+            429,
+            json={"error": "too_many_requests", "message": "Slow down."},
+            headers={"Retry-After": _http_date(120)},
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(RateLimitError) as exc_info:
+        api.domain("test.com")
+
+    assert 115 <= exc_info.value.retry_after <= 120
+    api.close()
+
+
+@respx.mock
+def test_retry_after_http_date_without_a_zone_is_read_as_utc():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(
+            503,
+            json={"error": "temporarily_unavailable", "message": "Registry throttling us."},
+            headers={"Retry-After": _http_date(300, tz=False)},
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(TemporarilyUnavailableError) as exc_info:
+        api.domain("test.com")
+
+    assert 295 <= exc_info.value.retry_after <= 300
+    api.close()
+
+
+@respx.mock
+def test_retry_after_http_date_in_the_past_is_zero():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(
+            429,
+            json={"error": "too_many_requests", "message": "Slow down."},
+            headers={"Retry-After": "Wed, 21 Oct 2015 07:28:00 GMT"},
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(RateLimitError) as exc_info:
+        api.domain("test.com")
+
+    assert exc_info.value.retry_after == 0
+    api.close()
+
+
+@respx.mock
+def test_retry_after_header_wins_over_the_body():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(
+            429,
+            json={"error": "rate_limit_exceeded", "message": "Rate limit exceeded.", "retry_after": 30},
+            headers={"Retry-After": "60"},
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(RateLimitError) as exc_info:
+        api.domain("test.com")
+
+    assert exc_info.value.retry_after == 60
+    api.close()
+
+
+@respx.mock
+def test_retry_after_zero_header_is_not_treated_as_absent():
+    """``Retry-After: 0`` means retry now, so it must beat the body's estimate."""
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(
+            429,
+            json={"error": "rate_limit_exceeded", "message": "Rate limit exceeded.", "retry_after": 30},
+            headers={"Retry-After": "0"},
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(RateLimitError) as exc_info:
+        api.domain("test.com")
+
+    assert exc_info.value.retry_after == 0
+    api.close()
+
+
+@respx.mock
+def test_retry_after_unparseable_header_falls_back_to_the_body():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(
+            429,
+            json={"error": "rate_limit_exceeded", "message": "Rate limit exceeded.", "retry_after": 30},
+            headers={"Retry-After": "soon"},
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(RateLimitError) as exc_info:
+        api.domain("test.com")
+
+    assert exc_info.value.retry_after == 30
+    api.close()
+
+
+@respx.mock
+def test_retry_after_unparseable_header_and_no_body_value():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(
+            429,
+            json={"error": "too_many_requests", "message": "Slow down."},
+            headers={"Retry-After": "soon"},
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(RateLimitError) as exc_info:
+        api.domain("test.com")
+
+    assert exc_info.value.retry_after is None
+    api.close()
+
+
+# === TLDs served over WHOIS ===
+
+
+@respx.mock
+def test_tlds_list_includes_whois_served_tlds():
+    payload = {
+        "data": [
+            {
+                "tld": "it",
+                "protocol": "whois",
+                "supported_since": "2026-05-13T11:21:03Z",
+                "server": "whois.nic.it",
+                "rdap_server_host": None,
+                "rdap_server_url": None,
+                "field_availability": None,
+            },
+        ],
+        "meta": {
+            "computed_at": "2026-09-18T10:00:00Z",
+            "count": 1,
+            "coverage": 1.0,
+            "thresholds": {"always": 0.99, "usually": 0.8, "sometimes": 0.0},
+        },
+    }
+    respx.get(f"{BASE_URL}/tlds").mock(return_value=httpx.Response(200, json=payload))
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    result = api.tlds(server="whois.nic.it")
+
+    assert result.data[0].protocol == "whois"
+    assert result.data[0].server == "whois.nic.it"
+    assert result.data[0].rdap_server_host is None
+    assert result.data[0].rdap_server_url is None
+    assert result.data[0].field_availability is None
     api.close()

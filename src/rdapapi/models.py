@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -24,7 +24,10 @@ __all__ = [
     "IpResponse",
     "Meta",
     "NameserverResponse",
+    "PingResponse",
     "PublicId",
+    "Redaction",
+    "RedactionMethod",
     "Registrar",
     "Remark",
     "TldEntry",
@@ -35,17 +38,44 @@ __all__ = [
     "TldThresholds",
 ]
 
+RedactionMethod = str
+"""How a value was withheld: ``removal``, ``emptyValue``, ``partialValue`` or
+``replacementValue``. A server may send something else, which is passed through
+unchanged, so this stays a plain :class:`str` rather than a closed enum."""
+
 
 class Meta(BaseModel):
-    """Metadata about the RDAP lookup."""
+    """Where the answer came from, and how it was served.
 
-    rdap_server: str
-    raw_rdap_url: str
-    cached: bool
-    cache_expires: str
+    Only ``source`` is always sent. Every other field can be missing: ``rdap_server``
+    and ``raw_rdap_url`` are absent when ``source`` is ``"whois"``, and a failed bulk
+    entry carries ``server`` and ``source`` alone. Use ``"cached" in meta.model_fields_set``
+    to tell a field the server omitted from one it sent as ``null``.
+    """
+
+    server: Optional[str] = None
+    source: str
+    rdap_server: Optional[str] = None
+    raw_rdap_url: Optional[str] = None
+    cached: Optional[bool] = None
+    cache_expires: Optional[str] = None
     followed: Optional[bool] = None
     registrar_rdap_server: Optional[str] = None
     follow_error: Optional[str] = None
+
+
+class Redaction(BaseModel):
+    """What the upstream server declared it withheld, and by what method.
+
+    Mirrors the shape of the record it describes, so a claim about
+    ``entities.registrant.name`` sits at ``redacted.entities["registrant"]["name"]``.
+    The whole object is absent — ``redacted`` is ``None`` — when the server declared
+    nothing, which is not evidence that nothing was withheld.
+    """
+
+    handle: Optional[RedactionMethod] = None
+    registrar: Dict[str, RedactionMethod] = Field(default_factory=dict)
+    entities: Dict[str, Dict[str, RedactionMethod]] = Field(default_factory=dict)
 
 
 class Dates(BaseModel):
@@ -129,7 +159,11 @@ class Remark(BaseModel):
 
 
 class DomainResponse(BaseModel):
-    """Response from a domain lookup."""
+    """Response from a domain lookup.
+
+    ``dnssec`` is ``None`` where the registry publishes no DNSSEC status, as ``.tr``,
+    ``.gg`` and ``.nc`` do not — distinct from ``False``, an unsigned delegation.
+    """
 
     domain: str
     unicode_name: Optional[str] = None
@@ -138,8 +172,9 @@ class DomainResponse(BaseModel):
     registrar: Registrar
     dates: Dates
     nameservers: List[str] = Field(default_factory=list)
-    dnssec: bool = False
+    dnssec: Optional[bool] = None
     entities: Entities = Field(default_factory=Entities)
+    redacted: Optional[Redaction] = None
     meta: Meta
 
 
@@ -151,7 +186,11 @@ class IpAddresses(BaseModel):
 
 
 class IpResponse(BaseModel):
-    """Response from an IP address lookup."""
+    """Response from an IP address lookup.
+
+    ``geofeed`` is the RFC 8805 URL this network publishes, as published: never
+    fetched, and never inherited from a parent network.
+    """
 
     handle: Optional[str] = None
     name: Optional[str] = None
@@ -165,8 +204,10 @@ class IpResponse(BaseModel):
     dates: Dates
     entities: Entities = Field(default_factory=Entities)
     cidr: List[str] = Field(default_factory=list)
+    geofeed: Optional[str] = None
     remarks: List[Remark] = Field(default_factory=list)
     port43: Optional[str] = None
+    redacted: Optional[Redaction] = None
     meta: Meta
 
 
@@ -178,11 +219,13 @@ class AsnResponse(BaseModel):
     type: Optional[str] = None
     start_autnum: Optional[int] = None
     end_autnum: Optional[int] = None
+    country: Optional[str] = None
     status: List[str] = Field(default_factory=list)
     dates: Dates
     entities: Entities = Field(default_factory=Entities)
     remarks: List[Remark] = Field(default_factory=list)
     port43: Optional[str] = None
+    redacted: Optional[Redaction] = None
     meta: Meta
 
 
@@ -196,6 +239,7 @@ class NameserverResponse(BaseModel):
     status: List[str] = Field(default_factory=list)
     dates: Dates
     entities: Entities = Field(default_factory=Entities)
+    redacted: Optional[Redaction] = None
     meta: Meta
 
 
@@ -232,11 +276,16 @@ class BulkDomainResult(BaseModel):
     When ``status`` is ``"success"``, ``data`` contains a full
     :class:`DomainResponse`.  When ``status`` is ``"error"``,
     ``error`` and ``message`` describe the failure.
+
+    ``meta`` names the upstream that answered, or that was tried. A failed entry
+    carries ``server`` and ``source`` alone, and one that failed before an upstream
+    was chosen — ``invalid_domain`` does — carries no ``meta`` at all.
     """
 
     domain: str
     status: str
     data: Optional[DomainResponse] = None
+    meta: Optional[Meta] = None
     error: Optional[str] = None
     message: Optional[str] = None
 
@@ -271,12 +320,20 @@ class FieldAvailability(BaseModel):
 
 
 class TldEntry(BaseModel):
-    """A single TLD entry from the ``/tlds`` catalog."""
+    """A single TLD entry from the ``/tlds`` catalog.
+
+    ``protocol`` is ``"whois"`` for the ccTLDs IANA lists no RDAP server for. Those
+    have no ``rdap_server_host`` or ``rdap_server_url``, and no ``field_availability``
+    — it is measured from RDAP responses. Use ``server`` for the host that answers,
+    whichever protocol it speaks.
+    """
 
     tld: str
+    protocol: str
     supported_since: str
-    rdap_server_host: str
-    rdap_server_url: str
+    server: str
+    rdap_server_host: Optional[str] = None
+    rdap_server_url: Optional[str] = None
     field_availability: Optional[FieldAvailability] = None
 
 
@@ -340,4 +397,11 @@ class EntityResponse(BaseModel):
     entities: Entities = Field(default_factory=Entities)
     autnums: List[EntityAutnum] = Field(default_factory=list)
     networks: List[EntityNetwork] = Field(default_factory=list)
+    redacted: Optional[Redaction] = None
     meta: Meta
+
+
+class PingResponse(BaseModel):
+    """Response from the ``/ping`` health check."""
+
+    status: str
