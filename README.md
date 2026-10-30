@@ -165,8 +165,9 @@ except SubscriptionRequiredError as e:
 `NotSupportedError` is a subclass of `NotFoundError`, and `PlanUpgradeRequiredError` of
 `SubscriptionRequiredError`, so catching the parent still handles both cases. All
 exceptions inherit from `RdapApiError` and include `status_code`, `error`, `message` and
-`retry_after` attributes. Branch on `error`, the machine-readable code — never on
-`message`, and never on the endpoint: any code can answer any endpoint.
+`retry_after` attributes; `NotFoundError` adds `reason` and `registrable_domain`. Branch
+on `error`, the machine-readable code — never on `message`, and never on the endpoint:
+any code can answer any endpoint.
 
 | Exception | HTTP Status | `error` | When |
 |-----------|------------|---------|------|
@@ -176,6 +177,8 @@ exceptions inherit from `RdapApiError` and include `status_code`, `error`, `mess
 | `SubscriptionRequiredError` | 403 | `forbidden` | This IP is temporarily blocked. It lifts on its own, so retry later — API rate limits never cause it |
 | `PlanUpgradeRequiredError` | 403 | `plan_upgrade_required` | Endpoint needs a higher plan |
 | `NotFoundError` | 404 | `not_found` | Namespace is covered but no record exists |
+| `NotFoundError` | 404 | `domain_reserved` | Registry reserves the name; `reason` quotes its wording |
+| `NotFoundError` | 404 | `not_registrable` | Name sits below a registrable domain; `registrable_domain` names it |
 | `NotSupportedError` | 404 | `not_supported` | Namespace (TLD, IP range, ASN range) is covered by neither RDAP nor the WHOIS fallback |
 | `MethodNotAllowedError` | 405 | `method_not_allowed` | Wrong HTTP method for the endpoint |
 | `PayloadTooLargeError` | 413 | `payload_too_large` | Request body too large |

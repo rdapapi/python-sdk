@@ -280,6 +280,9 @@ class BulkDomainResult(BaseModel):
     ``meta`` names the upstream that answered, or that was tried. A failed entry
     carries ``server`` and ``source`` alone, and one that failed before an upstream
     was chosen — ``invalid_domain`` does — carries no ``meta`` at all.
+
+    ``reason`` is set on ``domain_reserved`` and ``registrable_domain`` on
+    ``not_registrable``, as on :class:`~rdapapi.NotFoundError`.
     """
 
     domain: str
@@ -288,6 +291,8 @@ class BulkDomainResult(BaseModel):
     meta: Optional[Meta] = None
     error: Optional[str] = None
     message: Optional[str] = None
+    reason: Optional[str] = None
+    registrable_domain: Optional[str] = None
 
 
 class BulkDomainSummary(BaseModel):

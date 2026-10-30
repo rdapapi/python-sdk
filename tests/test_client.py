@@ -355,6 +355,52 @@ def test_not_found_error():
 
 
 @respx.mock
+def test_domain_reserved_error_carries_reason():
+    respx.get(f"{BASE_URL}/domain/si.si").mock(
+        return_value=httpx.Response(
+            404,
+            json={
+                "error": "domain_reserved",
+                "message": "This domain is reserved by the registry.",
+                "reason": "si.si is forbidden (Rezervirano za RS)",
+            },
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(NotFoundError) as exc_info:
+        api.domain("si.si")
+
+    assert exc_info.value.error == "domain_reserved"
+    assert exc_info.value.reason == "si.si is forbidden (Rezervirano za RS)"
+    assert exc_info.value.registrable_domain is None
+    api.close()
+
+
+@respx.mock
+def test_not_registrable_error_carries_registrable_domain():
+    respx.get(f"{BASE_URL}/domain/www.example.com").mock(
+        return_value=httpx.Response(
+            404,
+            json={
+                "error": "not_registrable",
+                "message": "www.example.com is not a registrable domain.",
+                "registrable_domain": "example.com",
+            },
+        )
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(NotFoundError) as exc_info:
+        api.domain("www.example.com")
+
+    assert exc_info.value.error == "not_registrable"
+    assert exc_info.value.registrable_domain == "example.com"
+    assert exc_info.value.reason is None
+    api.close()
+
+
+@respx.mock
 def test_not_supported_error_raised_on_unsupported_tld():
     respx.get(f"{BASE_URL}/domain/example.nope").mock(
         return_value=httpx.Response(

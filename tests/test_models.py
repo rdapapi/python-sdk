@@ -360,6 +360,35 @@ def test_bulk_domain_response_parses():
     assert result.results[1].data is None
 
 
+def test_bulk_domain_result_carries_reason_and_registrable_domain():
+    data = {
+        "results": [
+            {
+                "domain": "si.si",
+                "status": "error",
+                "error": "domain_reserved",
+                "message": "This domain is reserved by the registry.",
+                "reason": "si.si is forbidden (Rezervirano za RS)",
+            },
+            {
+                "domain": "www.example.com",
+                "status": "error",
+                "error": "not_registrable",
+                "message": "www.example.com is not a registrable domain.",
+                "registrable_domain": "example.com",
+            },
+        ],
+        "summary": {"total": 2, "successful": 0, "failed": 2},
+    }
+
+    result = BulkDomainResponse.model_validate(data)
+
+    assert result.results[0].reason == "si.si is forbidden (Rezervirano za RS)"
+    assert result.results[0].registrable_domain is None
+    assert result.results[1].registrable_domain == "example.com"
+    assert result.results[1].reason is None
+
+
 def test_domain_response_dnssec_null_when_registry_publishes_no_status():
     data = {
         "domain": "example.gg",

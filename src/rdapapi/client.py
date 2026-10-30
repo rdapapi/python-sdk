@@ -128,6 +128,9 @@ def _raise_for_status(response: httpx.Response) -> None:
 
         if exc_class is RequestFailedError:
             kwargs["errors"] = body.get("errors") or {}
+        elif issubclass(exc_class, NotFoundError):
+            kwargs["reason"] = body.get("reason")
+            kwargs["registrable_domain"] = body.get("registrable_domain")
 
         raise exc_class(message, **kwargs)
 

@@ -71,7 +71,25 @@ class NotFoundError(RdapApiError):
 
     Returned when the namespace (TLD, IP range, ASN range, nameserver TLD, entity
     handle pattern) is covered by an RDAP server but no matching record exists.
+
+    ``reason`` carries the registry's own wording on ``domain_reserved``, and
+    ``registrable_domain`` the name to look up instead on ``not_registrable``.
+    Both are ``None`` on every other error.
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        error: str | None = None,
+        retry_after: int | None = None,
+        reason: str | None = None,
+        registrable_domain: str | None = None,
+    ) -> None:
+        super().__init__(message, status_code=status_code, error=error, retry_after=retry_after)
+        self.reason = reason
+        self.registrable_domain = registrable_domain
 
 
 class NotSupportedError(NotFoundError):
