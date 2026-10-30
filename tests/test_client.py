@@ -475,6 +475,19 @@ def test_upstream_error():
     api.close()
 
 
+@respx.mock
+def test_lookup_failed_sent_as_503_is_an_upstream_error():
+    respx.get(f"{BASE_URL}/domain/test.com").mock(
+        return_value=httpx.Response(503, json={"error": "lookup_failed", "message": "RDAP lookup failed."})
+    )
+
+    api = RdapApi("test-key", base_url=BASE_URL)
+    with pytest.raises(UpstreamError):
+        api.domain("test.com")
+
+    api.close()
+
+
 def test_empty_api_key_raises():
     with pytest.raises(ValueError, match="non-empty"):
         RdapApi("")

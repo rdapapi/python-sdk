@@ -181,7 +181,7 @@ exceptions inherit from `RdapApiError` and include `status_code`, `error`, `mess
 | `PayloadTooLargeError` | 413 | `payload_too_large` | Request body too large |
 | `RequestFailedError` | 422 | `request_failed` | Body failed validation; `errors` names the fields |
 | `RateLimitError` | 429 | `rate_limit_exceeded`, `quota_exceeded`, `too_many_requests` | Rate limit or quota exceeded |
-| `UpstreamError` | 502 | `lookup_failed`, `bad_gateway` | Upstream RDAP server error |
+| `UpstreamError` | 503, 502 | `lookup_failed` (503), `bad_gateway` (502) | Upstream RDAP server error |
 | `TemporarilyUnavailableError` | 503 | `temporarily_unavailable`, `service_unavailable` | Data temporarily unavailable |
 | `GatewayTimeoutError` | 504 | `gateway_timeout` | Request did not complete in time |
 | `ServerError` | 5xx | `server_error` | Any other server-side failure |

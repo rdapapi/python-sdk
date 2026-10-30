@@ -116,6 +116,9 @@ def _raise_for_status(response: httpx.Response) -> None:
             exc_class = NotSupportedError
         elif exc_class is SubscriptionRequiredError and error == "plan_upgrade_required":
             exc_class = PlanUpgradeRequiredError
+        elif exc_class is TemporarilyUnavailableError and error == "lookup_failed":
+            # The API sends lookup_failed as 503, as its CDN replaces 502 bodies.
+            exc_class = UpstreamError
 
         kwargs: Dict[str, Any] = {
             "status_code": response.status_code,

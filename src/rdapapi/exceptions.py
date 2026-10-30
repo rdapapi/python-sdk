@@ -129,7 +129,7 @@ class ServerError(RdapApiError):
 
 
 class UpstreamError(ServerError):
-    """Raised when the upstream RDAP server fails (HTTP 502)."""
+    """Raised when the upstream RDAP server fails (`lookup_failed`, `bad_gateway`)."""
 
 
 class TemporarilyUnavailableError(ServerError):
